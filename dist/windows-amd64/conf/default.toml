@@ -1,0 +1,60 @@
+# MarketDataCollector の標準の既定設定です。
+# このファイルがあるため、リポジトリルートで `go run .` を実行できます。
+
+[SYSTEM]
+# HTTPサーバーが待ち受けるTCPポート番号です。単位は番号で、1～65535を指定します。
+# 既定の8080は一般利用者権限で起動でき、開発用サービスと衝突しにくい値として採用しています。
+Port = 8080
+# RESTおよびMCPの1要求へ共通適用する実行期限です。単位はGoの期間文字列で、1s～10mを指定します。
+# 60sは通常の市場データ取得を待ちつつ、応答しない上流処理を長時間保持しないための既定値です。
+RequestTimeout = "60s"
+# RESTおよびMCPで受け付けるHTTP要求本文の最大サイズです。単位はバイトで、1～16777216を指定します。
+# 1048576バイト（1MiB）に抑え、巨大なJSON入力によるメモリ消費を制限します。
+MaxRequestBytes = 1048576
+
+[python]
+# yfinanceとinvestingpyが共有するPython実行ファイル名またはパスです。単位はなく、空文字とNUL文字は指定できません。
+# PATH上の標準的なCPythonを利用できるよう、既定値はpythonです。実運用では専用仮想環境の絶対パスを推奨します。
+executable = "python"
+# 要求を標準入力で受け、結果を標準出力へ返すPythonアダプタースクリプトのパスです。単位はなく、空文字とNUL文字は指定できません。
+# リポジトリ同梱の固定許可リスト実装だけを呼び出すため、既定値はpython/collector.pyです。
+script = "python/collector.py"
+# Python子プロセス1件について、専用実行枠の待機から完了までを許可する時間です。単位はGoの期間文字列で、1s～10mを指定します。
+# 60sで停止させ、Pythonライブラリや取得元が応答しない場合にプロセスを残し続けないようにします。
+timeout = "60s"
+# Python子プロセスの標準出力として保持する最大サイズです。単位はバイトで、1～67108864を指定します。
+# 16777216バイト（16MiB）は比較的大きな表形式データを許可しつつ、応答バッファの肥大化を制限します。
+max_response_bytes = 16777216
+# yfinanceとinvestingpyで共有するPython子プロセスの同時起動数です。単位はプロセス数で、1～8を指定します。
+# 2プロセスに限定し、pandas等を含む子プロセスのCPU・メモリ消費が集中することを防ぎます。
+max_concurrent_processes = 2
+
+[providers.nikkei225jp]
+# 225225.jp providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
+# trueの場合だけproviderを登録してdatalistへ掲載します。falseの場合は一覧から外れ、収集要求はNOT_FOUNDになります。
+enabled = true
+# 225225.jp内部数値配信を解決するHTTPオリジンです。単位はなく、http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
+# 配信パスを固定許可リストから同一ホストへ解決するため、既定値は公式サイトのオリジンです。
+base_url = "https://225225.jp"
+# 225225.jpへのHTTP要求1件が完了するまで待つ時間です。単位はGoの期間文字列で、1s～5mを指定します。
+# 10sで通信を中止し、遅延した取得元を待つ要求処理が長時間継続しないようにします。
+timeout = "10s"
+# 225225.jpへ送信するHTTP User-Agentヘッダー値です。単位はなく、空文字およびHTTPヘッダーで禁止された制御文字は指定できません。
+# 取得元のアクセスログで本アプリケーションからの通信を識別できるよう、製品名と版を指定します。
+user_agent = "MarketDataCollector/0.1"
+# 現在値や小さな数値表のHTTP応答本文として読み取る最大サイズです。単位はバイトで、1～16777216を指定します。
+# 4194304バイト（4MiB）まで読み取り、通常データの増加へ十分な余裕を持たせます。
+max_response_bytes = 4194304
+# チャートおよび大きな数値表のHTTP応答本文として読み取る最大サイズです。単位はバイトで、1～67108864を指定します。
+# 33554432バイト（32MiB）まで読み取り、長期間の履歴データにも余裕を持たせます。
+max_chart_response_bytes = 33554432
+
+[providers.yfinance]
+# yfinance providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
+# trueの場合だけproviderを登録してdatalistへ掲載します。falseの場合は一覧から外れ、収集要求はNOT_FOUNDになります。
+enabled = true
+
+[providers.investingpy]
+# investingpy識別子のproviderへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
+# trueの場合だけproviderを登録してdatalistへ掲載します。falseの場合は一覧から外れ、収集要求はNOT_FOUNDになります。
+enabled = true
