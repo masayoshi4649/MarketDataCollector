@@ -9,7 +9,7 @@
 - 後のファイルで指定した項目だけが前の値を上書きする。
 - TOMLファイルが0件、解析失敗、未知項目、統合後の不正値は起動エラーにする。
 
-リポジトリには既定の `conf/default.toml` があるため、ルートから `go run .` で起動できる。端末固有設定は `conf/90-local.local.toml` などへ保存する。この拡張名も `.toml` なので読み込まれ、Gitでは無視される。
+リポジトリには既定の `conf/default.toml` がある。現在はPython providerが有効なため、Python環境を構築するか、両Python providerを `false` へ上書きした上で、ルートから `go run .` で起動する。端末固有設定は `conf/90-local.local.toml` などへ保存する。この拡張名も `.toml` なので読み込まれ、Gitでは無視される。
 
 ## `[SYSTEM]`
 
@@ -38,15 +38,15 @@
 
 | 項目 | 既定値 | 内容 |
 | --- | --- | --- |
-| `enabled` | `false` | yfinance providerの収集を許可する |
+| `enabled` | `true` | 同梱 `conf/default.toml` の実効値。yfinance providerの収集を許可する |
 
 ## `[providers.investingpy]`
 
 | 項目 | 既定値 | 内容 |
 | --- | --- | --- |
-| `enabled` | `false` | investingpy識別子のproviderの収集を許可する |
+| `enabled` | `true` | 同梱 `conf/default.toml` の実効値。investingpy識別子のproviderの収集を許可する |
 
-両providerは利用条件確認が必要なため既定値は `false` であり、それぞれ独立して有効化できる。`enabled=true` のproviderだけが `datalist` に掲載される。`false` のproviderを `collect` に指定しても、存在しないproviderと同じ `NOT_FOUND` になる。
+Go内部の基底値は両providerとも `false` だが、同梱の `conf/default.toml` は現在両方を `true` で上書きする。各providerは独立して設定でき、`enabled=true` のproviderだけが `datalist` に掲載される。`false` のproviderを `collect` に指定しても、存在しないproviderと同じ `NOT_FOUND` になる。
 
 ## `[python]`
 

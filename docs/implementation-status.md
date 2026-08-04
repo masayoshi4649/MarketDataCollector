@@ -35,7 +35,7 @@
 4. 225225.jpの既存調査実装をprovider層へ移し、固定取得先、本文上限、厳格パーサーを維持した。
 5. yfinance/investpyはGoで非公開上流APIを再実装せず、固定JSON契約のPython子プロセスへ分離した。
 6. PyPI `investingpy` は採用せず、外部識別子だけを維持して非公式OSS `investpy==1.0.8` を使う。
-7. 利用条件の確認が必要なPython providerは既定無効とした。
+7. Python providerのGo内部基底値は無効とし、同梱設定で利用するproviderを明示的に有効化する。
 8. 225225.jpの市場時刻、データ内日時、HTTP取得時刻を統合せず保持した。
 9. 待受はPortだけで常に全インターフェースとし、到達制御が必要な環境ではアプリケーション外のネットワーク境界へ委ねる。
 10. `enabled=false` のproviderは一覧へ出さず、収集時も未定義providerと同じ `NOT_FOUND` にした。

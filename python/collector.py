@@ -498,7 +498,7 @@ def _load_provider_module(
     except ImportError as error:
         raise CollectorError(
             f"必要なライブラリ「{import_name}」を読み込めません。"
-            "python/requirements.txtをインストールしてください。"
+            "python/requirements.lock.txtをインストールしてください。"
         ) from error
 
 

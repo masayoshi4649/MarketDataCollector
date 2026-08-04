@@ -27,13 +27,17 @@
 ## 必要環境
 
 - Go 1.24.2 以上
-- Python providerを使う場合だけPython 3.10以上と `python/requirements.lock.txt` の依存ライブラリ
+- Python providerを使う場合だけPython 3.12以上と `python/requirements.lock.txt` の依存ライブラリ
 
-Python依存の固定版はCPython 3.14 / Windowsで検証しています。別のPython・OSで利用する場合は、その環境でもインストールと単体テストを確認してください。
+Python依存の固定版はCPython 3.14 / Windowsで検証しています。現在のlockはPython 3.12未満には導入できません。別のPython・OSで利用する場合は、その環境でもインストールと単体テストを確認してください。
 
 ## 起動
 
+ビルド済み配布物の配置、Pythonの要否、仮想環境、依存パッケージ、Windows/Linux別の起動方法は [構築・配置手順書](docs/setup-guide.md) を参照してください。
+
 リポジトリルートで次を実行します。
+
+現在の `conf/default.toml` はPython providerを有効にしているため、先にPython環境を構築するか、使用しないPython providerを `enabled=false` にしてください。
 
 ```powershell
 go run .
@@ -124,7 +128,7 @@ http://127.0.0.1:8080/mcp
 
 ## Python provider
 
-Python providerは既定で無効です。利用条件とデータ利用権を確認した環境だけで有効化してください。
+同梱の `conf/default.toml` では、現在yfinanceとinvestingpyが両方とも有効です。そのまま起動する場合はPython環境を構築してください。利用しないproviderは `enabled=false` に変更できます。
 
 依存ライブラリを仮想環境へインストールします。
 
@@ -152,7 +156,7 @@ max_response_bytes = 16777216
 max_concurrent_processes = 2
 ```
 
-`[providers.yfinance].enabled` と `[providers.investingpy].enabled` は独立しており、どちらも既定値は `false` です。利用条件と取得元の許諾を確認できたproviderだけを有効にします。`true` にしたproviderだけが `datalist` に掲載されます。トップレベルの `[python]` は両providerで共有する実行設定です。
+`[providers.yfinance].enabled` と `[providers.investingpy].enabled` は独立しています。同梱の `conf/default.toml` では両方とも `true` であり、`true` にしたproviderだけが `datalist` に掲載されます。利用しないproviderは `false` にします。トップレベルの `[python]` は両providerで共有する実行設定です。
 
 `max_concurrent_processes` はyfinanceとinvestingpyで共有するPython子プロセス専用枠で、既定値は2、範囲は1～8です。PythonのCPU・メモリ消費を抑え、専用枠待ちの時間もPython処理の `timeout` に含めます。
 
@@ -229,6 +233,8 @@ go test ./internal/provider/nikkei225jp -run Live -v
 .
 ├── conf/                         TOML設定とサンプル
 ├── docs/                         設計、API、MCP、provider仕様
+│   └── setup-guide.md            構築、配置、Python依存の手順書
+├── dist/                         OS・CPU別の配布物
 ├── internal/
 │   ├── config/                   TOML読込と検証
 │   ├── domain/                   REST/MCP共通DTOとエラー

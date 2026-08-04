@@ -1,6 +1,6 @@
 # Python収集アダプター
 
-`collector.py` は収集要求ごとにGoプロセスから起動される、Python 3.10以上の標準入出力アダプターです。1つの子プロセスが標準入力のJSONを1件処理し、成功時は標準出力へJSONを1件返します。ライブラリが出力した付随メッセージとエラーは標準エラーへ送ります。
+`collector.py` は収集要求ごとにGoプロセスから起動される、Python 3.12以上の標準入出力アダプターです。1つの子プロセスが標準入力のJSONを1件処理し、成功時は標準出力へJSONを1件返します。ライブラリが出力した付随メッセージとエラーは標準エラーへ送ります。
 
 ## セットアップ
 
@@ -8,13 +8,13 @@
 python -m pip install -r python/requirements.lock.txt
 ```
 
-`requirements.lock.txt` はCPython 3.14 / Windowsで依存解決と検証を行った通常セットアップ用の固定版です。`requirements.txt` はyfinanceとinvestpyという直接依存だけを記載したlock更新用入力であり、再現インストールには使いません。lockはversionだけを固定してhashを含まないため、公開配布では対象環境ごとのhash付きlockとSBOMを生成することを推奨します。
+`requirements.lock.txt` はCPython 3.14 / Windowsで依存解決と検証を行った通常セットアップ用の固定版です。現在のlockはPython 3.12未満には導入できません。`requirements.txt` はyfinanceとinvestpyという直接依存だけを記載したlock更新用入力であり、再現インストールには使いません。lockはversionだけを固定してhashを含まないため、公開配布では対象環境ごとのhash付きlockとSBOMを生成することを推奨します。
 
 PyPI上の `investingpy` という名前のパッケージは使用しません。外部provider名は要件に合わせて `investingpy` ですが、インストール名とimport名は非公式OSSの `investpy==1.0.8` です。investpyはInvesting.comが提供する公式クライアントではありません。
 
 `investpy==1.0.8` は参照先サイトの変更に追随しておらず、現在の上流サイトに対する動作は保証できません。呼び出し失敗はアダプターの非0終了として扱われます。
 
-利用するproviderだけをTOMLで個別に有効化します。両方の既定値は `false` です。
+利用するproviderだけをTOMLで個別に有効化します。同梱の `conf/default.toml` では、現在両方とも `true` です。
 
 ```toml
 [providers.yfinance]
@@ -29,7 +29,7 @@ script = "python/collector.py"
 max_concurrent_processes = 2
 ```
 
-各providerの `enabled` は独立しており、どちらも既定値は `false` です。`true` のproviderだけが `datalist` に掲載され、`false` のproviderを `collect` に指定すると `NOT_FOUND` になります。トップレベルの `[python]` が共有実行設定です。`max_concurrent_processes` はyfinanceとinvestingpyで共有する専用枠で、既定値は2、範囲は1～8です。枠待ちもPython処理の `timeout` に含まれます。
+各providerの `enabled` は独立しています。同梱の `conf/default.toml` では両方とも `true` です。`true` のproviderだけが `datalist` に掲載され、`false` のproviderを `collect` に指定すると `NOT_FOUND` になります。トップレベルの `[python]` が共有実行設定です。`max_concurrent_processes` はyfinanceとinvestingpyで共有する専用枠で、既定値は2、範囲は1～8です。枠待ちもPython処理の `timeout` に含まれます。
 
 Investing.comは公開APIを提供していないと案内しており、Webページの自動抽出には同社とデータ権利者の規約が適用されます。利用条件と書面許諾を確認できない環境では `[providers.investingpy].enabled` を `true` にしないでください。一次資料は [Provider仕様](../docs/providers.md#investingpy) にまとめています。
 
