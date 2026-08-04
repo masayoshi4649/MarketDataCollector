@@ -13,16 +13,15 @@ REST APIとHTTP MCPは同じプロセスで起動します。データベース�
 
 Pythonの要否は、使用するproviderで決まります。
 
-| 使用するprovider | Python | Pythonパッケージ |
-| --- | --- | --- |
-| `225225jp` だけ | 不要 | 不要 |
-| `yfinance` | 必要 | 必要 |
-| `investingpy` | 必要 | 必要 |
-| `yfinance` と `investingpy` の両方 | 必要 | 必要 |
+| 使用するprovider                   | Python | Pythonパッケージ |
+| ---------------------------------- | ------ | ---------------- |
+| `225225jp` だけ                    | 不要   | 不要             |
+| `yfinance`                         | 必要   | 必要             |
+| `investingpy`                      | 必要   | 必要             |
+| `yfinance` と `investingpy` の両方 | 必要   | 必要             |
 
 配布物の `conf/default.toml` では、現在 `yfinance` と `investingpy` が両方とも `enabled=true` です。その設定を変更せずに起動する場合は、Python環境を先に構築してください。
 
-yfinanceとinvestpyは取得元の公式SDKではありません。適用される利用条件とデータ利用権を確認したproviderだけを有効にしてください。特に `investingpy` は、Investing.comとデータ権利者から必要な許諾を確認できない環境では `enabled=false` にしてください。
 
 Pythonを使用しない場合は、`conf/90-runtime.local.toml` を作成して次の内容を保存します。後から読み込まれるこのファイルで両providerを無効にすれば、Python本体、仮想環境、Pythonパッケージはすべて不要です。
 
@@ -199,10 +198,10 @@ enabled = true
 
 アプリケーションが直接利用するパッケージは次の2つです。
 
-| 公開provider名 | インストールするパッケージ | import名 | 固定版 |
-| --- | --- | --- | --- |
-| `yfinance` | `yfinance` | `yfinance` | `1.5.2` |
-| `investingpy` | `investpy` | `investpy` | `1.0.8` |
+| 公開provider名 | インストールするパッケージ | import名   | 固定版  |
+| -------------- | -------------------------- | ---------- | ------- |
+| `yfinance`     | `yfinance`                 | `yfinance` | `1.5.2` |
+| `investingpy`  | `investpy`                 | `investpy` | `1.0.8` |
 
 `investingpy` というPyPIパッケージは使用しません。外部へ公開するprovider識別子だけが `investingpy` であり、実際に導入するパッケージは `investpy` です。
 
@@ -348,13 +347,12 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 
 ## 10. 主な起動エラー
 
-| 状況 | 確認箇所 |
-| --- | --- |
+| 状況                             | 確認箇所                                           |
+| -------------------------------- | -------------------------------------------------- |
 | Python実行ファイルが見つからない | `python.executable` のパスと、providerの `enabled` |
-| Pythonアダプターを参照できない | `python.script` とカレントディレクトリ |
-| `PROVIDER_UNAVAILABLE` | 仮想環境へのlock一式の導入、import確認、Python版 |
-| TCP 8080番で起動できない | 同じポートを使用中の別プロセス、`SYSTEM.Port` |
-| Linuxで実行を拒否される | `chmod +x ./MarketDataCollector` の実行有無 |
-| 外部データを取得できない | DNS、HTTPS、CA証明書、取得元の状態、利用条件 |
+| Pythonアダプターを参照できない   | `python.script` とカレントディレクトリ             |
+| `PROVIDER_UNAVAILABLE`           | 仮想環境へのlock一式の導入、import確認、Python版   |
+| TCP 8080番で起動できない         | 同じポートを使用中の別プロセス、`SYSTEM.Port`      |
+| Linuxで実行を拒否される          | `chmod +x ./MarketDataCollector` の実行有無        |
 
 `investpy==1.0.8` は参照先サイトの変更に追随しておらず、Python環境の構築に成功しても実データ取得が失敗する場合があります。
