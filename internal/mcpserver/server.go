@@ -3,7 +3,9 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -78,8 +80,9 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	notDestructive := false
 	openWorld := true
 	mcp.AddTool(protocolServer, &mcp.Tool{
-		Name:        "datalist",
-		Description: "利用可能なprovider、dataset、入力項目を返します。外部通信は行いません。RESTのGET /api/datalistと同じ仕様です。",
+		Name:         "datalist",
+		Description:  "利用可能なprovider、dataset、入力項目を返します。外部通信は行いません。RESTのGET /api/datalistと同じ仕様です。",
+		OutputSchema: json.RawMessage(dataListOutputSchemaJSON),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ一覧",
 			ReadOnlyHint:    readOnly,
@@ -89,8 +92,9 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 		},
 	}, server.dataList)
 	mcp.AddTool(protocolServer, &mcp.Tool{
-		Name:        "collect",
-		Description: "providerとdatasetを指定し、要求時に市場情報を収集して返します。RESTのPOST /api/collectと同じ入力・出力です。",
+		Name:         "collect",
+		Description:  "providerとdatasetを指定し、要求時に市場情報を収集して返します。RESTのPOST /api/collectと同じ入力・出力です。",
+		OutputSchema: json.RawMessage(collectOutputSchemaJSON),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ収集",
 			ReadOnlyHint:    readOnly,
@@ -136,9 +140,9 @@ func (s *Server) Handler() http.Handler {
 //   - input DataListInput: 入力項目を持たない値。
 //
 // 返り値:
-//   - *mcp.CallToolResult: SDKへ内容生成を委ねるためのnil。
-//   - any: REST APIと同じdomain.DataList。SDKの数値再変換を避けるため動的出力として返す。
-//   - error: datalistでは常にnil。
+//   - *mcp.CallToolResult: REST APIと同じJSONを含むMCP結果。
+//   - any: SDKによるSchema再変換を避けるため常にnil。
+//   - error: JSON化に失敗した場合のエラー。
 func (s *Server) dataList(
 	ctx context.Context,
 	request *mcp.CallToolRequest,
@@ -147,7 +151,8 @@ func (s *Server) dataList(
 	_ = ctx
 	_ = request
 	_ = input
-	return nil, s.service.DataList(), nil
+	result, err := newStructuredToolResult(s.service.DataList())
+	return result, nil, err
 }
 
 // collect は、共通サービスを使って要求時収集を実行します。
@@ -179,7 +184,36 @@ func (s *Server) collect(
 		}
 		return nil, nil, err
 	}
-	return nil, result, nil
+	toolResult, err := newStructuredToolResult(result)
+	return toolResult, nil, err
+}
+
+// ----------------------------------------
+
+// newStructuredToolResult は、値を精度を変えずにMCPの構造化結果へ変換します。
+//
+// 主な特徴:
+//   - encoding/jsonで一度だけJSON化する
+//   - 同じ生JSONをstructured contentとtext contentへ設定する
+//   - SDKのoutput schema検証に伴う動的数値のfloat64再変換を避ける
+//
+// 引数:
+//   - output any: MCPツールから返すJSON化可能な値。
+//
+// 返り値:
+//   - *mcp.CallToolResult: 生JSONを構造化結果とテキスト結果へ設定した値。
+//   - error: JSON化に失敗した場合のエラー。
+func newStructuredToolResult(output any) (*mcp.CallToolResult, error) {
+	data, err := json.Marshal(output)
+	if err != nil {
+		return nil, fmt.Errorf("MCPツール出力をJSONへ変換できません: %w", err)
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(data)},
+		},
+		StructuredContent: json.RawMessage(data),
+	}, nil
 }
 
 // ----------------------------------------

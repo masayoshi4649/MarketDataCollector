@@ -164,6 +164,8 @@ http://127.0.0.1:8080/mcp
 
 最初に `datalist` を呼び、返されたproviderとdatasetを `collect` へ指定します。
 
+`datalist` は一覧の固定階層、`collect` は収集結果の共通外枠を `outputSchema` として公開します。`collect.data` はproviderとdatasetに固有のため任意のJSON値です。
+
 ```json
 {
   "provider": "225225jp",

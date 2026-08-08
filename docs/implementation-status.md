@@ -34,7 +34,7 @@
 - [x] Python共有実行設定をトップレベル `[python]` に分離する
 - [x] 指定Portの全インターフェースで待ち受け、REST/MCPへ共通の要求期限と本文上限を適用する
 - [x] Origin制限なしでCORS `*` を返す公開境界を文書化する
-- [x] MCP出力のSchema再変換を避け、2^53超のJSON整数をRESTと同じ送信値で保持する
+- [x] MCPの両toolへoutput schemaを公開し、Schema再変換を避けて2^53超のJSON整数をRESTと同じ送信値で保持する
 - [x] docsへ構成、REST、MCP、設定、provider仕様を残す
 - [x] 通常テストを外部通信なしで実行できる
 
@@ -63,6 +63,7 @@
 21. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
 22. Polymarket JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化し、本文サイズを設定値で制限する。
 23. CLOB `/price` の公式資料が `side` の意味を逆に記載するため、2026年8月8日のOpenAPI/API Referenceと実測を優先し、best bidを `BUY`、best askを `SELL` へ対応させる。
+24. MCPは `datalist` の固定階層と `collect` の共通外枠をoutput schemaとして公開する。成功値は同じ生JSONをstructured contentとtext contentへ設定し、provider固有の動的値と大整数の精度を維持する。
 
 ## J-Quants API v2の実装基準
 

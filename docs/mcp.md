@@ -42,6 +42,8 @@ tool名、共通入力、共通出力をRESTの末尾操作名と一致させる
 
 `enabled=false` のproviderは掲載されず、`collect` に直接指定しても未定義providerと同じ `NOT_FOUND` になる。
 
+output schemaには `version` からparameterの `allowed`、`default` まで、`domain.DataList` の固定階層を公開する。これによりクライアントとモデルはtoolを呼び出す前に結果の形を判断できる。
+
 tool annotationは読み取り専用、非破壊、閉じた世界として公開する。
 
 ## `collect`
@@ -61,7 +63,9 @@ tool annotationは読み取り専用、非破壊、閉じた世界として公�
 
 入力と出力は [REST API仕様](rest-api.md) の `/api/collect` と同じである。成功時は `domain.CollectResponse` をstructured contentとJSON text contentとして返す。
 
-provider固有 `data` は形が異なるため、toolの固定output schemaは公開しない。Go SDKのoutput schema適用が動的JSONをfloat64へ再変換しない経路を使い、structured contentとtext contentへ同じ生JSONを設定する。これにより2^53を超えるJSON整数もREST/MCPの送信時点では丸めず保持する。
+output schemaには `version`、`provider`、`dataset`、`collected_at`、`metadata`、`data` の共通外枠を公開する。provider固有 `data` はdatasetごとに形が異なるため、型を限定しないJSON値として説明し、具体的な入力と結果の意味は `datalist` とprovider仕様で公開する。
+
+成功値は一度だけJSON化し、structured contentとtext contentへ同じ生JSONを設定する。Go SDKにはSchemaを広告する一方、動的JSONをSchema適用で `float64` へ再変換する経路を通さない。これにより2^53を超えるJSON整数もREST/MCPの送信時点では丸めず保持する。
 
 J-QuantsのページングとcursorもRESTと同じである。1回の `collect` は上流の1ページだけを取得し、返却された `pagination_key` または `cursor` はprovider固有 `data` 内に保持する。後続ページまたは差分は、同じ検索条件と返却キーを次の `collect` へ渡して取得する。
 

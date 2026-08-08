@@ -82,7 +82,9 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	service := &fakeService{
 		dataList: domain.DataList{Version: domain.APIVersion, Providers: []domain.ProviderDescriptor{{
 			Name: "test", DisplayName: "テスト",
-			Datasets: []domain.DatasetDescriptor{{Name: "prices"}},
+			Datasets: []domain.DatasetDescriptor{{
+				Name: "prices", Description: "テスト価格", Parameters: []domain.ParameterDescriptor{},
+			}},
 		}}},
 		result: domain.CollectResponse{
 			Version: domain.APIVersion, Provider: "test", Dataset: "prices",
@@ -98,17 +100,17 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools() error = %v", err)
 	}
-	toolNames := make(map[string]struct{}, len(tools.Tools))
+	toolsByName := make(map[string]*mcp.Tool, len(tools.Tools))
 	for _, tool := range tools.Tools {
-		toolNames[tool.Name] = struct{}{}
+		toolsByName[tool.Name] = tool
 	}
 	if len(tools.Tools) != 2 {
 		t.Fatalf("tool件数 = %d, 2を期待", len(tools.Tools))
 	}
-	if _, exists := toolNames["datalist"]; !exists {
+	if _, exists := toolsByName["datalist"]; !exists {
 		t.Fatal("datalistツールがありません")
 	}
-	if _, exists := toolNames["collect"]; !exists {
+	if _, exists := toolsByName["collect"]; !exists {
 		t.Fatal("collectツールがありません")
 	}
 	for _, tool := range tools.Tools {
@@ -117,6 +119,17 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 			t.Errorf("tool注釈 = %+v, 読み取り専用・非破壊を期待", tool.Annotations)
 		}
 	}
+	assertToolOutputSchema(t, toolsByName["datalist"], "version", "providers")
+	assertToolOutputSchema(
+		t,
+		toolsByName["collect"],
+		"version",
+		"provider",
+		"dataset",
+		"collected_at",
+		"metadata",
+		"data",
+	)
 
 	listResult, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "datalist", Arguments: map[string]any{}})
 	if err != nil || listResult.IsError {
@@ -124,8 +137,17 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	}
 	var dataList domain.DataList
 	decodeStructuredResult(t, listResult, &dataList)
-	if len(dataList.Providers) != 1 || dataList.Providers[0].Name != "test" {
+	if len(dataList.Providers) != 1 {
+		t.Fatalf("datalist provider件数 = %d, 1を期待", len(dataList.Providers))
+	}
+	if dataList.Providers[0].Name != "test" {
 		t.Errorf("datalist結果 = %+v, test providerを期待", dataList)
+	}
+	if len(dataList.Providers[0].Datasets) != 1 {
+		t.Fatalf("datalist dataset件数 = %d, 1を期待", len(dataList.Providers[0].Datasets))
+	}
+	if dataList.Providers[0].Datasets[0].Parameters == nil {
+		t.Errorf("datalist parameters = %#v, output schemaどおり空配列を期待", dataList.Providers[0].Datasets[0].Parameters)
 	}
 
 	collectResult, err := session.CallTool(ctx, &mcp.CallToolParams{
@@ -149,6 +171,47 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	}
 	if len(service.requests) != 1 || service.requests[0].Parameters["symbol"] != "A" {
 		t.Errorf("共通サービス要求 = %+v, symbol=Aを期待", service.requests)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestNewStructuredToolResultPreservesRawJSON は、MCP成功結果のJSON表現を検証します。
+
+機能:
+  - structured contentとtext contentが同じ生JSONになることを確認する
+  - 2^53超整数と高精度小数がfloat64へ変換されないことを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestNewStructuredToolResultPreservesRawJSON(t *testing.T) {
+	result, err := newStructuredToolResult(map[string]any{
+		"large_integer":   json.Number("9007199254740993"),
+		"precise_decimal": json.Number("0.12345678901234567890123456789"),
+	})
+	if err != nil {
+		t.Fatalf("newStructuredToolResult() error = %v", err)
+	}
+	rawContent, ok := result.StructuredContent.(json.RawMessage)
+	if !ok {
+		t.Fatalf("StructuredContent = %#v, json.RawMessageを期待", result.StructuredContent)
+	}
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("Content = %#v, TextContentを期待", result.Content)
+	}
+	if string(rawContent) != textContent.Text {
+		t.Errorf("structured content = %s, text content = %s, 同じJSONを期待", rawContent, textContent.Text)
+	}
+	for _, expected := range []string{"9007199254740993", "0.12345678901234567890123456789"} {
+		if !strings.Contains(textContent.Text, expected) {
+			t.Errorf("MCP JSON text = %s, %sの精度保持を期待", textContent.Text, expected)
+		}
 	}
 }
 
@@ -278,5 +341,43 @@ func decodeStructuredResult(t *testing.T, result *mcp.CallToolResult, output any
 	}
 	if err := json.Unmarshal(data, output); err != nil {
 		t.Fatalf("StructuredContentの復号 error = %v, JSON=%s", err, data)
+	}
+}
+
+/*
+assertToolOutputSchema は、公開ツールのoutput schemaを検証します。
+
+機能:
+  - output schemaがobjectとして公開されることを確認する
+  - モデルが結果を解釈するために必要なプロパティが定義されることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+  - tool *mcp.Tool: 検証する公開ツール
+  - propertyNames ...string: schemaに必要なプロパティ名
+
+返り値:
+  - なし
+*/
+func assertToolOutputSchema(t *testing.T, tool *mcp.Tool, propertyNames ...string) {
+	t.Helper()
+	if tool == nil {
+		t.Fatal("output schemaを検証するツールがありません")
+	}
+	schema, ok := tool.OutputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("%s output schema = %#v, JSON objectを期待", tool.Name, tool.OutputSchema)
+	}
+	if schema["type"] != "object" {
+		t.Errorf("%s output schema type = %#v, objectを期待", tool.Name, schema["type"])
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s output schema properties = %#v, JSON objectを期待", tool.Name, schema["properties"])
+	}
+	for _, propertyName := range propertyNames {
+		if _, exists := properties[propertyName]; !exists {
+			t.Errorf("%s output schemaに%sがありません", tool.Name, propertyName)
+		}
 	}
 }
