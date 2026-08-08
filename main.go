@@ -22,6 +22,7 @@ import (
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/jquants"
 	nikkei225provider "github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225jp"
+	"github.com/masayoshi4649/MarketDataCollector/internal/provider/polymarket"
 	pythonprovider "github.com/masayoshi4649/MarketDataCollector/internal/provider/python"
 	"github.com/masayoshi4649/MarketDataCollector/internal/restapi"
 	"github.com/masayoshi4649/MarketDataCollector/internal/service"
@@ -163,10 +164,10 @@ func listenAddress(port int) string {
 //   - cfg config.Config: 検証済みの全アプリケーション設定。
 //
 // 返り値:
-//   - []provider.Collector: 有効な225225.jp、J-Quants、yfinance、investingpyの設定順一覧。
-//   - error: HTTPクライアント、provider、J-Quantsクライアント、Python実行環境の生成エラー。
+//   - []provider.Collector: 有効な225225.jp、J-Quants、Polymarket、yfinance、investingpyの設定順一覧。
+//   - error: HTTPクライアント、各Go provider、Python実行環境の生成エラー。
 func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
-	collectors := make([]provider.Collector, 0, 4)
+	collectors := make([]provider.Collector, 0, 5)
 	if cfg.Providers.Nikkei225JP.Enabled {
 		httpClient := &http.Client{Timeout: cfg.Providers.Nikkei225JP.Timeout.Duration}
 		nikkeiClient, err := nikkei225jp.NewClient(nikkei225jp.Config{
@@ -208,6 +209,28 @@ func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
 			return nil, fmt.Errorf("J-Quants providerを生成できません: %w", err)
 		}
 		collectors = append(collectors, jQuantsCollector)
+	}
+
+	// ----------------------------------------
+
+	if cfg.Providers.Polymarket.Enabled {
+		httpClient := &http.Client{Timeout: cfg.Providers.Polymarket.Timeout.Duration}
+		polymarketClient, err := polymarket.NewClient(polymarket.ClientConfig{
+			GammaBaseURL:     cfg.Providers.Polymarket.GammaBaseURL,
+			CLOBBaseURL:      cfg.Providers.Polymarket.CLOBBaseURL,
+			DataBaseURL:      cfg.Providers.Polymarket.DataBaseURL,
+			HTTPClient:       httpClient,
+			UserAgent:        cfg.Providers.Polymarket.UserAgent,
+			MaxResponseBytes: cfg.Providers.Polymarket.MaxResponseBytes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("Polymarket APIクライアントを生成できません: %w", err)
+		}
+		polymarketCollector, err := polymarket.NewCollector(polymarketClient)
+		if err != nil {
+			return nil, fmt.Errorf("Polymarket providerを生成できません: %w", err)
+		}
+		collectors = append(collectors, polymarketCollector)
 	}
 
 	// ----------------------------------------

@@ -10,9 +10,10 @@ MarketDataCollectorは、市場情報を要求時に取得し、REST APIと標�
 REST /api/datalist ─┐
 REST /api/collect  ─┼─> internal/service ─> provider registry ─┬─> 225225.jp HTTP
 MCP datalist       ─┤                                          ├─> J-Quants API HTTP
-MCP collect        ─┘                                          └─> Python adapter
-                                                                      ├─> yfinance
-                                                                      └─> investpy
+MCP collect        ─┘                                          ├─> Polymarket Gamma/CLOB/Data HTTP
+                                                               └─> Python adapter
+                                                                    ├─> yfinance
+                                                                    └─> investpy
 ```
 
 - `internal/domain`: 接続方式に依存しない `DataList`、`CollectRequest`、`CollectResponse`、エラー分類
@@ -21,6 +22,7 @@ MCP collect        ─┘                                          └─> Pytho
 - `internal/provider/nikkei225jp`: 225225.jpの同一ホストHTTP、本文上限、厳格パーサー
 - `internal/provider/nikkei225`: 225225.jpの13データセットを共通契約へ変換し、ローカル絞り込みを適用
 - `internal/provider/jquants`: J-Quants API v2の固定endpoint、プラン・アドオン別catalog、APIキー送信、Gzip展開、本文上限を管理するGoネイティブprovider
+- `internal/provider/polymarket`: Polymarketの公開Gamma/CLOB/Data APIの固定GET、入力検証、JSON正規化、本文上限、単一FIFOとquotaを管理するGoネイティブprovider
 - `internal/provider/python`: 子プロセスの期限、標準出力上限、厳密JSONを管理
 - `python/collector.py`: yfinanceとinvestpyの許可済み関数だけを呼び、Python固有値をJSONへ正規化
 - `internal/restapi`: HTTPメソッド、Content-Type、JSON、状態コードだけを扱う薄いadapter
@@ -43,6 +45,7 @@ MCPはRESTのようにtoolごとのURIを持たず、1つのStreamable HTTP endp
 - `[SYSTEM]` はPortとREST/MCP共通の要求期限・本文上限だけを持つ。待受ホストは持たず、全インターフェースで待ち受ける。
 - `[providers.nikkei225jp]` は有効状態に加え、225225.jpへのHTTP接続、User-Agent、本文上限を持つ。
 - `[providers.jquants]` は有効状態、APIオリジン、秘密APIキー、契約プラン、アドオン、HTTP期限、User-Agent、未圧縮・Gzip圧縮・展開後本文の上限を持つ。
+- `[providers.polymarket]` は有効状態、Gamma/CLOB/Dataの3 APIオリジン、HTTP期限、User-Agent、本文上限を持つ。認証情報は持たない。
 - `[providers.yfinance]` と `[providers.investingpy]` は、それぞれの有効状態を独立して持つ。
 - トップレベル `[python]` は2つのPython providerが共有する実行ファイル、script、期限、出力上限、プロセス枠を持つ。
 
@@ -54,7 +57,7 @@ MCPはRESTのようにtoolごとのURIを持たず、1つのStreamable HTTP endp
 2. RESTまたはMCP adapterが要求を `domain.CollectRequest` へ変換する。
 3. serviceがproviderとdatasetをdatalistの固定仕様と照合する。
 4. providerがdataset固有入力を未知項目も含めて検証する。
-5. providerが外部情報を収集し、標準JSONで表現できる値へ正規化する。Python providerは取得元metadataも付ける。
+5. providerが外部情報を収集し、標準JSONで表現できる値へ正規化する。Polymarketは `UseNumber` で数値表現を保持し、Python providerは取得元metadataも付ける。
 6. serviceがversion、provider、dataset、完了UTC時刻を付ける。
 7. RESTとMCPが同じ `domain.CollectResponse` を返す。
 
@@ -84,6 +87,19 @@ J-QuantsはPython adapterを経由せず、GoのHTTPクライアントからJ-Qu
 - 429や上流障害を自動再試行しない。FIFOキューとquotaはプロセス単位のため、同じAPIキーを複数プロセスで使う場合は呼び出し側で合算し、応答分類に応じて再実行を判断する。
 - BulkとTDnetのダウンロード系応答は署名付きURLだけを返し、ファイル本体の取得、展開、保存は行わない。
 - APIキーは `x-api-key` ヘッダーのみに設定し、応答とmetadataへ含めない。通信エラーはAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持する。非2xxの上流本文は応答やmetadataへ保持せず、固定のメッセージへ置き換える。
+
+## Polymarketの取得境界
+
+PolymarketはPython adapterを経由せず、GoのHTTPクライアントから公開Gamma、CLOB、Data APIへ直接接続する。認証情報やwallet署名を扱わず、固定許可した37 datasetのGETだけをregistryへ登録する。事前検証PJの基礎10機能を移植し、公開読取専用APIを27 dataset追加している。詳細なパスと未実装範囲は [Polymarket公開API対応状況](polymarket.md) に集約する。
+
+- `enabled=true` でも起動時と `datalist` では接続せず、`collect` 時だけ上流へ接続する。上流応答を保存しない。
+- 1回の `collect` につき上流GETを1回だけ実行する。分岐datasetも入力から1パスだけを選び、複数応答を合成しない。
+- 検索は `page`、Gammaのイベント・市場一覧は応答の `next_cursor` を次回の `after_cursor` へ、CLOB市場一覧は応答の `next_cursor` を同名の次回入力へ、Data一覧は `offset` を進めて継続する。自動追跡・結合・永続化を行わない。ページング対象では `total_pages_known` を常に保持し、総ページ数の実値は上流が提供する場合だけ保持する。Dataのoffset型応答は `has_more_known=false` とし、返却件数から完了や次のoffsetを推測しない。
+- 全要求で共有するプロセス内の単一FIFOキューへ受付順に入れ、1件ずつ、[公式上限](https://docs.polymarket.com/api-reference/rate-limits)の50%以下で開始する。キュー待機を要求contextの期限対象とし、429を自動再試行しない。
+- 成功JSONを `json.Decoder.UseNumber` で復号し、標準JSON値へ再帰的に正規化する。巨大整数を途中で `float64` へ変換しない。
+- `Accept-Encoding: gzip` を明示し、`max_response_bytes` を未圧縮本文、Gzip圧縮本文、Gzip展開後本文へ適用する。既定は16 MiB、設定範囲は1～64 MiBである。過大本文、不正JSON、余分なJSON値、非成功HTTP状態をエラー分類へ変換し、上流本文を公開エラーに含めない。
+- 2026年8月8日時点のCLOB `/price` は、API Referenceと実測に合わせてbest bidを `BUY`、best askを `SELL` へ変換する。高レベル公式ページは逆に記載するため、仕様更新時は両sideを実測して再確認する。
+- 注文、キャンセル、入出金、API credential、認証付きアカウント情報、WebSocketは呼び出さない。
 
 ## Python境界
 
@@ -117,7 +133,7 @@ MCP成功出力はprovider固有の動的 `data` を含むため固定output sch
 
 内部原因、上流本文、実行パスは公開応答へ含めず、サーバーログだけへ記録する。RESTは分類をHTTP状態へ変換し、MCPはtool errorとして返す。
 
-J-Quantsの場合は上流HTTP 400、401、403、429、5xxを前述の固定分類へ変換する。署名付きURLの取得とファイル本体の取得は別操作であり、本サーバーは後者の失敗を分類しない。
+J-Quantsの場合は上流HTTP 400、401、403、429、5xxを前述の固定分類へ変換する。署名付きURLの取得とファイル本体の取得は別操作であり、本サーバーは後者の失敗を分類しない。Polymarketの場合も入力不正、期限、429を含む利用不能、その他の上流HTTP・JSON失敗を共通分類へ変換し、429を自動再試行しない。
 
 ## セキュリティ
 

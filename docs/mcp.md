@@ -65,6 +65,8 @@ provider固有 `data` は形が異なるため、toolの固定output schemaは�
 
 J-QuantsのページングとcursorもRESTと同じである。1回の `collect` は上流の1ページだけを取得し、返却された `pagination_key` または `cursor` はprovider固有 `data` 内に保持する。後続ページまたは差分は、同じ検索条件と返却キーを次の `collect` へ渡して取得する。
 
+PolymarketのページングもRESTと同じである。1回の `collect` は1回の公開GETと1ページだけを取得する。検索は `page`、Gammaは応答の `next_cursor` を次回の `after_cursor` へ、CLOBは応答の `next_cursor` を同名の次回入力へ、Dataは `offset` を進めて継続し、tool側では自動追跡・結合しない。ページング対象のmetadataは `total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ返す。
+
 tool annotationは読み取り専用、非破壊、外部接続ありとして公開する。要求時の市場データは時間により変わるため、idempotent hintはfalseとする。
 
 ## エラー

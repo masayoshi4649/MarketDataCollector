@@ -14,7 +14,7 @@ TestDefault は、Defaultが新しい責務分離後の既定値を返すこと�
 機能:
   - SYSTEMにHTTPサーバー共通制限だけが設定されることを確認する
   - Python共通実行設定がトップレベルに存在することを確認する
-  - 225225.jpおよびJ-Quants固有HTTP設定と各providerの有効状態を確認する
+  - 225225.jp、J-Quants、Polymarket固有HTTP設定と各providerの有効状態を確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -124,6 +124,33 @@ func TestDefault(t *testing.T) {
 
 	// ----------------------------------------
 
+	polymarket := cfg.Providers.Polymarket
+	if !polymarket.Enabled ||
+		polymarket.GammaBaseURL != "https://gamma-api.polymarket.com" ||
+		polymarket.CLOBBaseURL != "https://clob.polymarket.com" ||
+		polymarket.DataBaseURL != "https://data-api.polymarket.com" {
+		t.Errorf("Polymarket基本設定 = %+v, 公式3 APIを使う有効な既定値を期待", polymarket)
+	}
+	if polymarket.Timeout.Duration != 15*time.Second ||
+		polymarket.UserAgent != "MarketDataCollector/0.1" {
+		t.Errorf(
+			"Polymarket HTTP設定 = (%s, %q), 期待値は(%s, %q)",
+			polymarket.Timeout,
+			polymarket.UserAgent,
+			15*time.Second,
+			"MarketDataCollector/0.1",
+		)
+	}
+	if polymarket.MaxResponseBytes != 16*1024*1024 {
+		t.Errorf(
+			"Polymarket応答上限 = %d, 期待値は%d",
+			polymarket.MaxResponseBytes,
+			16*1024*1024,
+		)
+	}
+
+	// ----------------------------------------
+
 	if cfg.Providers.YFinance.Enabled || cfg.Providers.InvestingPy.Enabled {
 		t.Error("利用条件の確認が必要なPython providerが既定値で有効です")
 	}
@@ -135,9 +162,9 @@ func TestDefault(t *testing.T) {
 TestLoadDir は、分割したTOMLテーブルをファイル名順に統合することを検証します。
 
 機能:
-  - SYSTEM、python、4つのproviderテーブルを新構造へ復号する
+  - SYSTEM、python、5つのproviderテーブルを新構造へ復号する
   - 後順位ファイルが指定項目だけを上書きする
-  - J-Quants、yfinance、investingpyを独立して有効化できることを確認する
+  - J-Quants、Polymarket、yfinance、investingpyを独立して有効化できることを確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -163,6 +190,10 @@ enabled = true
 plan = "premium"
 timeout = "45s"
 
+[providers.polymarket]
+enabled = true
+timeout = "20s"
+
 [providers.yfinance]
 enabled = true
 `)
@@ -186,6 +217,14 @@ api_key = "integration-test-key"
 plan = "light"
 addons = ["minute", "tdnet"]
 user_agent = "J-Quants統合テスト/1.0"
+max_response_bytes = 33554432
+
+[providers.polymarket]
+enabled = false
+gamma_base_url = "https://gamma.example.test"
+clob_base_url = "https://clob.example.test"
+data_base_url = "https://data.example.test"
+user_agent = "Polymarket統合テスト/1.0"
 max_response_bytes = 33554432
 
 [providers.investingpy]
@@ -221,6 +260,15 @@ enabled = true
 		jQuants.MaxResponseBytes != 32*1024*1024 || len(jQuants.Addons) != 2 ||
 		jQuants.Addons[0] != "minute" || jQuants.Addons[1] != "tdnet" {
 		t.Error("J-Quants設定が分割ファイルの統合結果と一致しません")
+	}
+	polymarket := cfg.Providers.Polymarket
+	if !polymarket.Enabled || polymarket.GammaBaseURL != "https://gamma.example.test" ||
+		polymarket.CLOBBaseURL != "https://clob.example.test" ||
+		polymarket.DataBaseURL != "https://data.example.test" ||
+		polymarket.Timeout.Duration != 20*time.Second ||
+		polymarket.UserAgent != "Polymarket統合テスト/1.0" ||
+		polymarket.MaxResponseBytes != 32*1024*1024 {
+		t.Error("Polymarket設定が分割ファイルの統合結果と一致しません")
 	}
 	if !cfg.Providers.YFinance.Enabled || !cfg.Providers.InvestingPy.Enabled {
 		t.Errorf(
@@ -319,6 +367,11 @@ func TestLoadDirRejectsRemovedAndUnknownKeys(t *testing.T) {
 			name:     "J-Quants provider未知項目",
 			content:  "[providers.jquants]\nunknown_value = true\n",
 			wantPath: "providers.jquants.unknown_value",
+		},
+		{
+			name:     "Polymarket provider未知項目",
+			content:  "[providers.polymarket]\nunknown_value = true\n",
+			wantPath: "providers.polymarket.unknown_value",
 		},
 		{
 			name:     "provider未知項目",
@@ -690,6 +743,114 @@ func TestValidateRejectsJQuantsResponseSizeOutOfRange(t *testing.T) {
 
 			err := cfg.Validate()
 			if err == nil || !strings.Contains(err.Error(), "providers.jquants.max_response_bytes") {
+				t.Fatalf("Validate() error = %v, 応答本文上限の検証エラーを期待", err)
+			}
+		})
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateAcceptsPolymarketValues は、有効なPolymarket接続設定を受け付けることを検証します。
+
+機能:
+  - 公開3 APIのHTTPオリジン、期限、User-Agent、応答本文上限の境界値を許可する
+  - providerの有効状態にかかわらず同じ接続設定を検証できることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateAcceptsPolymarketValues(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.Polymarket.Enabled = false
+	cfg.Providers.Polymarket.GammaBaseURL = "https://gamma.example.test"
+	cfg.Providers.Polymarket.CLOBBaseURL = "https://clob.example.test"
+	cfg.Providers.Polymarket.DataBaseURL = "https://data.example.test"
+	cfg.Providers.Polymarket.Timeout = Duration{Duration: minPolymarketTimeout}
+	cfg.Providers.Polymarket.UserAgent = "市場収集/1.0"
+	cfg.Providers.Polymarket.MaxResponseBytes = minPolymarketResponseBytes
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("有効なPolymarket設定のValidate() error = %v", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsInvalidPolymarketValues は、Polymarket固有設定の不正値を拒否することを検証します。
+
+機能:
+  - 公開3 APIのURL、HTTP期限、User-Agent、応答本文上限を一括検証する
+  - providerが無効でも接続設定全体を検証する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsInvalidPolymarketValues(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.Polymarket.Enabled = false
+	cfg.Providers.Polymarket.GammaBaseURL = "https://gamma-api.polymarket.com/events"
+	cfg.Providers.Polymarket.CLOBBaseURL = "https://user@clob.polymarket.com"
+	cfg.Providers.Polymarket.DataBaseURL = "https://data-api.polymarket.com?query=true"
+	cfg.Providers.Polymarket.Timeout = Duration{Duration: maxPolymarketTimeout + time.Second}
+	cfg.Providers.Polymarket.UserAgent = "client\x7f"
+	cfg.Providers.Polymarket.MaxResponseBytes = maxPolymarketResponseBytes + 1
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, Polymarket検証エラーを期待")
+	}
+	for _, expected := range []string{
+		"providers.polymarket.gamma_base_url",
+		"providers.polymarket.clob_base_url",
+		"providers.polymarket.data_base_url",
+		"providers.polymarket.timeout",
+		"providers.polymarket.user_agent",
+		"providers.polymarket.max_response_bytes",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Validate() error = %q, %qを含むことを期待", err, expected)
+		}
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsPolymarketResponseSizeOutOfRange は、Polymarket応答本文上限の範囲外値を拒否することを検証します。
+
+機能:
+  - 1MiB未満と64MiB超の応答本文上限を拒否する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsPolymarketResponseSizeOutOfRange(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value int64
+	}{
+		{name: "下限未満", value: minPolymarketResponseBytes - 1},
+		{name: "上限超過", value: maxPolymarketResponseBytes + 1},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Providers.Polymarket.MaxResponseBytes = testCase.value
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "providers.polymarket.max_response_bytes") {
 				t.Fatalf("Validate() error = %v, 応答本文上限の検証エラーを期待", err)
 			}
 		})

@@ -17,13 +17,13 @@ Pythonの要否は、使用するproviderで決まります。
 | ---------------------------------- | ------ | ---------------- |
 | `225225jp` だけ                    | 不要   | 不要             |
 | `jquants`                          | 不要   | 不要             |
+| `polymarket`                       | 不要   | 不要             |
 | `yfinance`                         | 必要   | 必要             |
 | `investingpy`                      | 必要   | 必要             |
 | `yfinance` と `investingpy` の両方 | 必要   | 必要             |
 
 配布物の `conf/default.toml` では、現在 `yfinance` と `investingpy` が両方とも `enabled=true` です。その設定を変更せずに起動する場合は、Python環境を先に構築してください。
 
-yfinanceとinvestpyは取得元の公式SDKではありません。適用される利用条件とデータ利用権を確認したproviderだけを有効にしてください。特に `investingpy` は、Investing.comとデータ権利者から必要な許諾を確認できない環境では `enabled=false` にしてください。
 
 Pythonを使用しない場合は、`conf/zz-runtime.local.toml` を作成して次の内容を保存します。`default.toml` より後から読み込まれるこのファイルで両providerを無効にすれば、Python本体、仮想環境、Pythonパッケージはすべて不要です。
 
@@ -35,7 +35,7 @@ enabled = false
 enabled = false
 ```
 
-`jquants` はGoネイティブproviderのため、他のproviderと同時に有効化してもPythonの要否に影響しません。
+`jquants` と `polymarket` はGoネイティブproviderのため、他のproviderと同時に有効化してもPythonの要否に影響しません。
 
 ### 2.1 J-Quantsを利用する場合
 
@@ -67,6 +67,27 @@ max_response_bytes = 16777216
 
 通信エラーではAPIキーの完全一致だけを伏せ、URLやqueryなどの診断情報は保持します。queryへ独自の秘密値を入れないでください。
 
+### 2.2 Polymarketを利用する場合
+
+Polymarket providerは同梱設定で `enabled=true` です。公開Gamma、CLOB、Data APIのGETだけを使うため、APIキー、wallet署名、Python、Node.js、追加パッケージは不要です。`enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ通信します。
+
+通常は既定値を保持します。隔離したテスト先または通信期限・本文上限を変更する場合は、`conf/zz-polymarket.local.toml` などへ次を記載します。
+
+```toml
+[providers.polymarket]
+enabled = true
+gamma_base_url = "https://gamma-api.polymarket.com"
+clob_base_url = "https://clob.polymarket.com"
+data_base_url = "https://data-api.polymarket.com"
+timeout = "15s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+公式オリジンは通常変更しません。`Accept-Encoding: gzip` を送り、`max_response_bytes` は既定16 MiB、設定範囲1～64 MiBとして未圧縮・Gzip圧縮・展開後本文へ適用します。全要求をプロセス内の単一FIFOキューへ入れて1件ずつ、[公式レートリミット](https://docs.polymarket.com/api-reference/rate-limits)の50%以下で開始し、429を自動再試行しません。
+
+1回の `collect` は1 GETです。検索は `page`、Gammaは応答の `next_cursor` を次回の `after_cursor` へ、CLOBは応答の `next_cursor` を同名の次回入力へ、Dataは `offset` を進めて呼び出し側が継続します。ページング対象では `total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ返します。Dataのoffset型応答は `has_more_known=false` とし、返却件数から完了や次のoffsetを推測しません。37 datasetと入力は `datalist`、固定パスと非対応範囲は [Polymarket公開API対応状況](polymarket.md) を確認してください。
+
 ## 3. 必要環境
 
 ### 3.1 ビルド済みバイナリを実行する場合
@@ -76,6 +97,7 @@ max_response_bytes = 16777216
 - Linuxでは通常、OSのCA証明書一式
 - Python providerを使用する場合だけ、64ビット版CPython 3.12以上
 - J-Quants providerを使用する場合は、J-Quants APIへのHTTPS通信、契約プラン、有効なAPIキー
+- Polymarket providerを使用する場合は、Gamma、CLOB、Data APIへのHTTPS通信。APIキーとPythonは不要
 
 Pythonの固定依存はCPython 3.14 / Windowsで検証しています。現在の `requirements.lock.txt` はPython 3.12未満では導入できないため、手順上の下限を3.12とします。
 
@@ -96,6 +118,7 @@ dist/
 │  ├─ MarketDataCollector
 │  ├─ SETUP.md
 │  ├─ jquants.md
+│  ├─ polymarket.md
 │  ├─ conf/
 │  │  ├─ default.toml
 │  │  └─ conf.toml.sample
@@ -107,6 +130,7 @@ dist/
    ├─ MarketDataCollector.exe
    ├─ SETUP.md
    ├─ jquants.md
+   ├─ polymarket.md
    ├─ conf/
    │  ├─ default.toml
    │  └─ conf.toml.sample
@@ -304,7 +328,7 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/datalist
 ```
 
-`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば構築完了です。現在の同梱設定を変更していなければ、`225225jp`、`yfinance`、`investingpy` の3件が掲載されます。Git管理外のローカル設定で `jquants` も有効化した場合は、4 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はPythonパッケージのimportまでは行わないため、Python側は前述の `pip check` とimport確認も実施してください。
+`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば構築完了です。現在の同梱設定を変更していなければ、`225225jp`、`polymarket`、`yfinance`、`investingpy` の4件が掲載され、`polymarket` 内には37 datasetがあります。Git管理外のローカル設定で `jquants` も有効化した場合は、5 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はPythonパッケージのimportまでは行わないため、Python側は前述の `pip check` とimport確認も実施してください。
 
 既定の待受は全ネットワークインターフェースのTCP 8080番です。到達範囲はOSまたはネットワーク側のファイアウォールで調整してください。
 
@@ -381,6 +405,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 - `python/requirements.txt`
 - `python/requirements.lock.txt`
 - `docs/jquants.md` を `jquants.md` という名前でコピー
+- `docs/polymarket.md` を `polymarket.md` という名前でコピー
 - この手順書を `SETUP.md` という名前でコピー
 
 ## 10. 主な起動エラー
@@ -392,6 +417,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 | `PROVIDER_UNAVAILABLE`                | 仮想環境へのlock一式の導入、import確認、Python版                     |
 | J-Quants有効化時に起動できない        | `conf/*.local.toml` の `providers.jquants.api_key`、`plan`、`addons` |
 | J-Quants収集が `PROVIDER_UNAVAILABLE` | 契約プラン・アドオン、APIキー、利用枠、403/429応答                   |
+| Polymarket収集が失敗する              | 3 APIへのHTTPS疎通、本文上限、公式変更、429応答、利用条件            |
 | TCP 8080番で起動できない              | 同じポートを使用中の別プロセス、`SYSTEM.Port`                        |
 | Linuxで実行を拒否される               | `chmod +x ./MarketDataCollector` の実行有無                          |
 | 外部データを取得できない              | DNS、HTTPS、CA証明書、取得元の状態、利用条件                         |

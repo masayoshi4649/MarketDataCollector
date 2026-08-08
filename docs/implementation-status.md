@@ -18,6 +18,11 @@
 - [x] J-Quantsの1要求1ページ継続、当日差分cursor、Gzip圧縮前後の本文上限、HTTP状態、JSON整数精度を安全に扱う
 - [x] 全J-Quants要求共通の単一FIFOとAPI区分別独立quotaにより、受付順を保って公式上限の50%に抑える
 - [x] J-Quantsの同一originリダイレクトではAPIキーを維持し、異なるoriginではAPIキーだけを除去する
+- [x] Polymarketの公開Gamma/CLOB/Data APIを認証・Pythonなしで要求時に取得できる
+- [x] 事前検証PJの基礎10 datasetを移植し、公開読取専用27 datasetを追加した合計37 datasetを固定許可リストとして実装する
+- [x] Polymarketの1 collect=1 GET、page/keyset/CLOB cursor/Data offset、UseNumber正規化、設定可能な本文上限を扱う
+- [x] 全Polymarket要求共通の単一FIFOで1件ずつ処理し、公式quotaの50%以下に抑え、429を自動再試行しない
+- [x] Polymarketの公開実装、公開だが未実装、認証必須、状態変更endpointを区分して文書化する
 - [x] Python dataset・product・関数を固定許可リストにする
 - [x] Python固有値を厳密JSONへ正規化し、未知objectとキー衝突を拒否する
 - [x] Python providerを各providerセクションの `enabled` で個別設定し、`true` のproviderだけを一覧へ掲載する
@@ -25,7 +30,7 @@
 - [x] Python子プロセス数を2つのPython providerで共有する専用枠により制限する
 - [x] Python応答metadataへ取得元名、URL、非公式client表示、規約URLを付ける
 - [x] CPython 3.14 / Windowsで解決した `requirements.lock.txt` を提供する
-- [x] providerを `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.yfinance]`、`[providers.investingpy]` で個別設定する
+- [x] providerを `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` で個別設定する
 - [x] Python共有実行設定をトップレベル `[python]` に分離する
 - [x] 指定Portの全インターフェースで待ち受け、REST/MCPへ共通の要求期限と本文上限を適用する
 - [x] Origin制限なしでCORS `*` を返す公開境界を文書化する
@@ -53,6 +58,11 @@
 16. 全J-Quants要求で共有する単一FIFOキューと、基本・財務・株価分足／ティック・TDnetの独立quotaを設け、受付順を保って公式レート上限の50%で要求開始を均等化する。
 17. HTTPリダイレクトは通常どおり追跡し、同一originでは `x-api-key` を維持し、異なるoriginでは同ヘッダーだけを除去する。
 18. 通信診断はAPIキーの完全一致だけを伏せ、URLやquery等を保持する。`max_response_bytes` はGzip圧縮本文と展開後本文の双方に適用する。
+19. Polymarketは公式の公開3 APIだけをGoから直接呼び、認証情報とPython依存を持たせない。
+20. Polymarketの各datasetは入力から固定GETを1つだけ選び、応答合成やページ自動追跡をしない。上流が提供しない総ページ数、総件数、`has_more` を推測しない。
+21. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
+22. Polymarket JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化し、本文サイズを設定値で制限する。
+23. CLOB `/price` の公式資料が `side` の意味を逆に記載するため、2026年8月8日のOpenAPI/API Referenceと実測を優先し、best bidを `BUY`、best askを `SELL` へ対応させる。
 
 ## J-Quants API v2の実装基準
 
@@ -71,6 +81,25 @@
 
 ページングの完了条件は [公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)、当日差分のcursor契約は [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md)、実装上限の基準は [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md) に従う。
 
+## Polymarket公開APIの実装基準
+
+- 仕様確認日: 2026年8月8日
+- 実装済みdataset: 37件
+- 事前検証PJから移植: 10件
+- 追加実装: Data 9件、Gamma 10件、CLOB 8件の合計27件
+- 認証: 不要。API key、wallet署名、Pythonを使用しない
+- 更新操作: 0件。公開GETだけを実装
+- 上流要求: 1 collectにつき1 GET。ページや複数endpointを自動結合しない
+- ページング: searchのpage、Gamma events/marketsの応答 `next_cursor` から次回入力 `after_cursor`、CLOB市場一覧の `next_cursor`、Data一覧のoffset
+- ページ総数: ページング対象は `total_pages_known` を常に保持し、実値は上流が提供する場合だけ保持する。Data offset応答は `has_more_known=false` とし、総件数・次のoffset・完了を返却件数から推測しない
+- 本文上限: 既定16 MiB、設定範囲1～64 MiB。未圧縮・Gzip圧縮・展開後本文へ適用
+- JSON: `json.Decoder.UseNumber` と再帰的な標準JSON正規化
+- レート制御: 全要求共通の単一FIFOで直列実行し、公式quotaの50%以下。429の自動再試行なし
+
+37 datasetの固定パス、実装済み・公開だが未実装・認証必須・状態変更の区分、`/price` の公式資料間不整合、公開wallet情報、規約、地域制限、将来更新手順は [Polymarket公開API対応状況](polymarket.md) に記載する。
+
+公式仕様は自動同期しない。[Predictions Changelog](https://docs.polymarket.com/changelog/predictions) を監視し、endpoint、query、pagination、limit、quota変更時にDescriptor、spec、テスト、文書を同時更新する。
+
 ## 通常検証
 
 `test.ps1` は次を実行する。
@@ -82,7 +111,7 @@
 5. Python adapterの外部通信なしunittest
 6. ルート実行パッケージのbuild
 
-Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類のテストを含む。
+Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類、およびPolymarketの37 dataset・固定GET・入力分岐・ページング・UseNumber正規化・本文上限・FIFO順序・50%レート・状態分類のテストを含む。
 
 Pythonテストは偽yfinance/investpyモジュールを注入し、許可リスト、入力検証、pandas/NumPy相当値、日時、NaN、循環参照、標準入出力を検証する。
 
@@ -90,16 +119,17 @@ Pythonテストは偽yfinance/investpyモジュールを注入し、許可リス
 
 225225.jpは `LIVE_225225=1` の場合に実サイトテストを実行できる。通常CIでは実行しない。
 
-yfinanceとinvestpyのlive testは用意しない。利用許諾済み環境で、API経由の最小要求を手動確認する。
-
 J-Quantsは通常テストで外部接続せず、明示的な実API疎通だけをローカルで実行する。通常CIでは実行しない。
+
+Polymarketも通常テストで外部接続しない。2026年8月8日の仕様確認では、特にCLOB `/price` の `BUY` / `SELL` を明示的な実API疎通で確認した。継続的なlive testは通常CIで実行しない。
 
 ## 今後の候補
 
 - Python子プロセスの常駐worker pool化
 - provider別の短期singleflightとcircuit breaker
 - OpenAPI文書の自動生成
-- 許諾済みproviderの追加
+- providerの追加
 - 保存要件が追加された場合のRepository層とscheduler層
 - J-Quants公式リリース履歴と実装済みendpointの自動差分検出
 - J-Quantsのページング・cursorを使う上限付き継続収集
+- Polymarket Predictions Changelog・OpenAPIと実装済み37 datasetの自動差分検出

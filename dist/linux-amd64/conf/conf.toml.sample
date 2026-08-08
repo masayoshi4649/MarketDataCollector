@@ -76,6 +76,29 @@ user_agent = "MarketDataCollector/0.1"
 # 同時実行時のメモリ使用量を考慮し、必要なデータ量を確認して最小限にします。
 max_response_bytes = 16777216
 
+[providers.polymarket]
+# Polymarket providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
+# 公開情報を認証なしで取得でき、追加runtimeも不要なため、利用しない環境だけfalseへ変更します。
+enabled = true
+# 市場・イベントの検索とメタデータ取得に使うGamma APIオリジンです。http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
+# 隔離したテストサーバーを使う場合を除き、公式オリジンから変更しないでください。
+gamma_base_url = "https://gamma-api.polymarket.com"
+# 価格・注文板・価格履歴の取得に使うCLOB APIオリジンです。http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
+# 隔離したテストサーバーを使う場合を除き、公式オリジンから変更しないでください。
+clob_base_url = "https://clob.polymarket.com"
+# 公開ウォレットのポジション・アクティビティ取得に使うData APIオリジンです。http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
+# 隔離したテストサーバーを使う場合を除き、公式オリジンから変更しないでください。
+data_base_url = "https://data-api.polymarket.com"
+# Polymarket公開APIへのHTTP要求1件が完了するまで待つ時間です。単位はGoの期間文字列で、1s～5mを指定します。
+# 上位のSYSTEM.RequestTimeout以内に収まる値を指定します。
+timeout = "15s"
+# Polymarket公開APIへ送信するHTTP User-Agentヘッダー値です。単位はなく、空文字およびHTTPヘッダーで禁止された制御文字は指定できません。
+# 取得元のアクセスログで利用元を識別できる値を指定します。
+user_agent = "MarketDataCollector/0.1"
+# Polymarket公開APIのHTTP応答本文として読み取る最大サイズです。単位はバイトで、1048576～67108864を指定します。
+# 同時実行時のメモリ使用量を考慮し、必要なデータ量を確認して最小限にします。
+max_response_bytes = 16777216
+
 [providers.yfinance]
 # yfinance providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
 # trueの場合だけproviderを登録してdatalistへ掲載します。falseの場合は一覧から外れ、収集要求はNOT_FOUNDになります。

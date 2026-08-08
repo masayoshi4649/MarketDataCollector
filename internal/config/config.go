@@ -30,6 +30,12 @@ const (
 	defaultJQuantsTimeout                         = 30 * time.Second
 	defaultJQuantsUserAgent                       = "MarketDataCollector/0.1"
 	defaultJQuantsMaxResponseBytes          int64 = 16 * 1024 * 1024
+	defaultPolymarketGammaBaseURL                 = "https://gamma-api.polymarket.com"
+	defaultPolymarketCLOBBaseURL                  = "https://clob.polymarket.com"
+	defaultPolymarketDataBaseURL                  = "https://data-api.polymarket.com"
+	defaultPolymarketTimeout                      = 15 * time.Second
+	defaultPolymarketUserAgent                    = "MarketDataCollector/0.1"
+	defaultPolymarketMaxResponseBytes       int64 = 16 * 1024 * 1024
 	defaultPythonExecutable                       = "python"
 	defaultPythonScript                           = "python/collector.py"
 	defaultPythonTimeout                          = 60 * time.Second
@@ -48,6 +54,10 @@ const (
 	maxJQuantsTimeout                      = 5 * time.Minute
 	minJQuantsResponseBytes          int64 = 1 * 1024 * 1024
 	maxJQuantsResponseBytes          int64 = 64 * 1024 * 1024
+	minPolymarketTimeout                   = time.Second
+	maxPolymarketTimeout                   = 5 * time.Minute
+	minPolymarketResponseBytes       int64 = 1 * 1024 * 1024
+	maxPolymarketResponseBytes       int64 = 64 * 1024 * 1024
 	minPythonTimeout                       = time.Second
 	maxPythonTimeout                       = 10 * time.Minute
 	maxPythonResponseBytes           int64 = 64 * 1024 * 1024
@@ -77,6 +87,7 @@ type SystemConfig struct {
 type ProvidersConfig struct {
 	Nikkei225JP Nikkei225JPConfig `toml:"nikkei225jp"`
 	JQuants     JQuantsConfig     `toml:"jquants"`
+	Polymarket  PolymarketConfig  `toml:"polymarket"`
 	YFinance    ProviderConfig    `toml:"yfinance"`
 	InvestingPy ProviderConfig    `toml:"investingpy"`
 }
@@ -108,6 +119,17 @@ type JQuantsConfig struct {
 	MaxResponseBytes int64    `toml:"max_response_bytes"`
 }
 
+// PolymarketConfig は、Polymarket公開APIへの接続と応答本文の制限を保持します。
+type PolymarketConfig struct {
+	Enabled          bool     `toml:"enabled"`
+	GammaBaseURL     string   `toml:"gamma_base_url"`
+	CLOBBaseURL      string   `toml:"clob_base_url"`
+	DataBaseURL      string   `toml:"data_base_url"`
+	Timeout          Duration `toml:"timeout"`
+	UserAgent        string   `toml:"user_agent"`
+	MaxResponseBytes int64    `toml:"max_response_bytes"`
+}
+
 // PythonConfig は、Python provider間で共有する子プロセス実行設定を保持します。
 type PythonConfig struct {
 	Executable             string   `toml:"executable"`
@@ -121,7 +143,8 @@ type PythonConfig struct {
 Default は、アプリケーション設定の既定値を生成します。
 
 機能:
-  - HTTPサーバー、225225.jp通信、J-Quants API通信、Python実行環境の標準の既定値を組み立てる
+  - HTTPサーバー、225225.jp、J-Quants API、Polymarket公開API、Python実行環境の標準の既定値を組み立てる
+  - 認証不要のPolymarket公開API連携を既定で有効にする
   - APIキーが必要なJ-Quants API連携を既定では無効にする
   - 利用条件の確認が必要なPython連携を既定では無効にする
 
@@ -163,6 +186,15 @@ func Default() Config {
 				Timeout:          Duration{Duration: defaultJQuantsTimeout},
 				UserAgent:        defaultJQuantsUserAgent,
 				MaxResponseBytes: defaultJQuantsMaxResponseBytes,
+			},
+			Polymarket: PolymarketConfig{
+				Enabled:          true,
+				GammaBaseURL:     defaultPolymarketGammaBaseURL,
+				CLOBBaseURL:      defaultPolymarketCLOBBaseURL,
+				DataBaseURL:      defaultPolymarketDataBaseURL,
+				Timeout:          Duration{Duration: defaultPolymarketTimeout},
+				UserAgent:        defaultPolymarketUserAgent,
+				MaxResponseBytes: defaultPolymarketMaxResponseBytes,
 			},
 			YFinance:    ProviderConfig{Enabled: false},
 			InvestingPy: ProviderConfig{Enabled: false},
@@ -243,7 +275,7 @@ func LoadDir(dir string) (Config, error) {
 Validate は、アプリケーション設定が実行可能な範囲の値であることを検証します。
 
 機能:
-  - HTTPサーバー、225225.jp通信、J-Quants API通信、Python実行環境の範囲と形式をまとめて検証する
+  - HTTPサーバー、225225.jp、J-Quants API、Polymarket公開API、Python実行環境の範囲と形式をまとめて検証する
   - J-Quants APIキーの必須性を除き、providerの有効状態にかかわらず設定ファイル全体を起動時に検証する
   - 検出した複数の不正値を結合して返す
 
@@ -426,6 +458,59 @@ func (c Config) Validate() error {
 				minJQuantsResponseBytes,
 				maxJQuantsResponseBytes,
 				c.Providers.JQuants.MaxResponseBytes,
+			),
+		)
+	}
+
+	// ----------------------------------------
+
+	polymarketBaseURLs := []struct {
+		name  string
+		value string
+	}{
+		{name: "gamma_base_url", value: c.Providers.Polymarket.GammaBaseURL},
+		{name: "clob_base_url", value: c.Providers.Polymarket.CLOBBaseURL},
+		{name: "data_base_url", value: c.Providers.Polymarket.DataBaseURL},
+	}
+	for _, baseURL := range polymarketBaseURLs {
+		if err := validateBaseURL(baseURL.value); err != nil {
+			validationErrors = append(
+				validationErrors,
+				fmt.Errorf("providers.polymarket.%s が不正です: %w", baseURL.name, err),
+			)
+		}
+	}
+	if c.Providers.Polymarket.Timeout.Duration < minPolymarketTimeout ||
+		c.Providers.Polymarket.Timeout.Duration > maxPolymarketTimeout {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.polymarket.timeout は %s 以上 %s 以下である必要があります",
+				minPolymarketTimeout,
+				maxPolymarketTimeout,
+			),
+		)
+	}
+	if strings.TrimSpace(c.Providers.Polymarket.UserAgent) == "" {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.polymarket.user_agent は空にできません"),
+		)
+	} else if !validHTTPHeaderFieldValue(c.Providers.Polymarket.UserAgent) {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.polymarket.user_agent にHTTPヘッダーで利用できない制御文字があります"),
+		)
+	}
+	if c.Providers.Polymarket.MaxResponseBytes < minPolymarketResponseBytes ||
+		c.Providers.Polymarket.MaxResponseBytes > maxPolymarketResponseBytes {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.polymarket.max_response_bytes は %d 以上 %d 以下である必要があります: %d",
+				minPolymarketResponseBytes,
+				maxPolymarketResponseBytes,
+				c.Providers.Polymarket.MaxResponseBytes,
 			),
 		)
 	}

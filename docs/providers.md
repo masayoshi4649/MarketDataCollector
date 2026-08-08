@@ -9,7 +9,7 @@
 - 欠測値は推測で埋めず `null` または配信元の空値として保持する。
 - provider固有の変化へ対応できるよう、共通外枠とdataset固有 `data` を分離する。
 - Python providerのmetadataには、ライブラリ情報に加えて `source_name`、`source_url`、`unofficial_client`、`terms_url` を付与する。
-- providerの有効状態は `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
+- providerの有効状態は `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
 
 ## `225225jp`
 
@@ -19,21 +19,21 @@
 
 上流レスポンスはローカルに一切保持しない。`catalog` を除く各収集要求で225225.jpへ接続する。標準設定では通常レスポンス本文を4 MiB、チャート本文を32 MiBまで受け付ける。
 
-| dataset | 取得内容 | 上流通信 |
-| --- | --- | --- |
-| `catalog` | 対応市場、コード、チャート範囲 | なし |
-| `current` | 現在値、変化、騰落率、高値、安値、配信時刻 | 1 GET |
-| `chart` | `intraday` または `history` 点列 | 短期は原則1 GET、履歴は1コード1 GET |
-| `japan_components` | 日経225構成銘柄、価格、ウェイト、寄与度 | 1 GET |
-| `japan_contributors` | 日経225寄与度上位・下位 | 1 GET |
-| `japan_industries` | 東証33業種 | 1 GET |
-| `japan_ranking` | 日本株の値上がり・値下がり・出来高 | 1 GET |
-| `us_equities` | FANG+、DOW30、NASDAQ100等 | 1 GET |
-| `us_industries` | 米国業種指数 | 1 GET |
-| `us_ranking` | 米国株の値上がり・値下がり・出来高 | 1 GET |
-| `adr` | 日本株ADR、PTS、東証価格と比較率 | 1 GET |
-| `fx_rates` | 為替レート表 | 1 GET |
-| `crypto_assets` | 円価格、時価総額、期間別騰落率 | 1 GET |
+| dataset              | 取得内容                                   | 上流通信                            |
+| -------------------- | ------------------------------------------ | ----------------------------------- |
+| `catalog`            | 対応市場、コード、チャート範囲             | なし                                |
+| `current`            | 現在値、変化、騰落率、高値、安値、配信時刻 | 1 GET                               |
+| `chart`              | `intraday` または `history` 点列           | 短期は原則1 GET、履歴は1コード1 GET |
+| `japan_components`   | 日経225構成銘柄、価格、ウェイト、寄与度    | 1 GET                               |
+| `japan_contributors` | 日経225寄与度上位・下位                    | 1 GET                               |
+| `japan_industries`   | 東証33業種                                 | 1 GET                               |
+| `japan_ranking`      | 日本株の値上がり・値下がり・出来高         | 1 GET                               |
+| `us_equities`        | FANG+、DOW30、NASDAQ100等                  | 1 GET                               |
+| `us_industries`      | 米国業種指数                               | 1 GET                               |
+| `us_ranking`         | 米国株の値上がり・値下がり・出来高         | 1 GET                               |
+| `adr`                | 日本株ADR、PTS、東証価格と比較率           | 1 GET                               |
+| `fx_rates`           | 為替レート表                               | 1 GET                               |
+| `crypto_assets`      | 円価格、時価総額、期間別騰落率             | 1 GET                               |
 
 ### 市場分類
 
@@ -93,22 +93,43 @@ BulkとTDnetのダウンロード系datasetは、J-Quantsが発行した署名�
 - [レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)
 - [レスポンスステータス](https://jpx-jquants.com/ja/spec/response-status.md)
 
+## `polymarket`
+
+Polymarket公式の公開Gamma、CLOB、Data APIへ直接接続するGoネイティブproviderである。APIキー、wallet署名、Python、Node.js、外部SDKは使わず、すべて固定許可した公開 `GET` に限定する。注文、キャンセル、入出金、認証付きアカウント情報は実装しない。
+
+事前検証PJで確認した検索、イベント、市場、注文板、価格、価格履歴、公開walletの基礎10機能を移植し、Data 9件、Gamma 10件、CLOB 8件を追加した合計37 datasetを実装する。dataset、固定パス、実装済み・未実装・認証必須・状態変更の区分は [Polymarket公開API対応状況](polymarket.md) に集約する。
+
+### 取得契約
+
+- `enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ接続する。上流応答は保存しない。
+- 1回の `collect` は1回のGETだけを実行する。複数endpointの結果合成、ページの自動追跡・結合、定期収集、永続化は行わない。
+- 検索は `page`、Gammaのイベント・市場一覧は応答の `next_cursor` を次回の `after_cursor` へ、CLOB市場一覧は応答の `next_cursor` を同名の次回入力へ、Data一覧は `offset` を進めて継続する。cursorを解釈・加工しない。ページング対象では `total_pages_known` を常に返し、総ページ数等の実値は上流が提供する場合だけ返す。Dataのoffset型応答は `has_more_known=false` とし、返却件数から完了や次のoffsetを推測せず、呼び出し側が公式offset上限と期間分割を管理する。
+- 全Polymarket要求をプロセス内で共有する単一FIFOキューへ入れ、1件ずつ、[公式レートリミット](https://docs.polymarket.com/api-reference/rate-limits)の50%以下で開始する。429を自動再試行しない。
+- JSONは `json.Decoder.UseNumber` で復号して再帰的に標準JSONへ正規化し、巨大な整数を途中で `float64` へ変換して丸めない。
+- `Accept-Encoding: gzip` を明示し、HTTP本文上限 `max_response_bytes` を未圧縮・Gzip圧縮・展開後本文へ適用する。既定16 MiB、設定範囲1～64 MiBである。上限超過、不正JSON、余分なJSON値、HTTP状態を共通エラーへ分類する。
+
+### `/price` の注意
+
+2026年8月8日時点の現行OpenAPIを表示する [CLOB `/price` API Reference](https://docs.polymarket.com/api-reference/market-data/get-market-price) と同日の実測では `BUY` がbest bid、`SELL` がbest askだった。一方、[高レベルのPrices and Order Books](https://docs.polymarket.com/market-data/prices-order-books) は `BUY` をlowest ask、`SELL` をhighest bidと逆に説明している。本実装は前者と実測に従い、`best_bid` を `BUY`、`best_ask` を `SELL` へ変換する。仕様更新時は両sideを再確認する。
+
+### 公開wallet情報と利用条件
+
 ## `yfinance`
 
 Pythonの `yfinance==1.5.2` を使う。`[providers.yfinance].enabled` で個別に有効化し、子プロセスの実行条件はトップレベル `[python]` を使う。
 
-| dataset | 内容 | 主な必須入力 |
-| --- | --- | --- |
-| `quote` | 銘柄基本情報 | `ticker` |
-| `history` | 単一銘柄価格履歴 | `ticker` |
-| `actions` | 配当・分割 | `ticker` |
-| `financials` | 損益、貸借、キャッシュフロー | `ticker` |
-| `analysis` | 目標価格、業績予想、推奨等 | `ticker` |
-| `holders` | 主要、機関、投信、インサイダー | `ticker` |
-| `options` | 満期一覧またはチェーン | `ticker` |
-| `news` | 銘柄関連ニュース | `ticker` |
-| `search` | 銘柄、ニュース等の横断検索 | `query` |
-| `download` | 複数銘柄の価格履歴 | `tickers` |
+| dataset      | 内容                           | 主な必須入力 |
+| ------------ | ------------------------------ | ------------ |
+| `quote`      | 銘柄基本情報                   | `ticker`     |
+| `history`    | 単一銘柄価格履歴               | `ticker`     |
+| `actions`    | 配当・分割                     | `ticker`     |
+| `financials` | 損益、貸借、キャッシュフロー   | `ticker`     |
+| `analysis`   | 目標価格、業績予想、推奨等     | `ticker`     |
+| `holders`    | 主要、機関、投信、インサイダー | `ticker`     |
+| `options`    | 満期一覧またはチェーン         | `ticker`     |
+| `news`       | 銘柄関連ニュース               | `ticker`     |
+| `search`     | 銘柄、ニュース等の横断検索     | `query`      |
+| `download`   | 複数銘柄の価格履歴             | `tickers`    |
 
 `history` の `start` は含み、`end` は含まない。分足は直近60日以内という上流制限がある。`auto_adjust` と `repair` は結果の意味を変えるため、要求で明示することを推奨する。
 
@@ -122,23 +143,22 @@ pandas DataFrame/Series、MultiIndex、NumPy scalar、Timestamp、NaN、NaT、In
 - [価格履歴仕様](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html)
 - [Yahoo利用規約](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
 
-yfinanceはYahoo公式SDKではなく、yfinanceプロジェクトのドキュメントもYahoo Finance APIを個人利用向けとして案内している。OSSライセンスは取得データの再配布権を付与しない。一般公開、組織共有、商用利用では、Yahooとデータ権利者の許諾を別途確認する。
 
 ## `investingpy`
 
 外部provider識別子は要件に合わせて `investingpy` とする。ただしPyPIの同名パッケージは使用せず、非公式OSS `investpy==1.0.8` をimportする。investpyはInvesting.comが提供する公式クライアントではない。`[providers.investingpy].enabled` で個別に有効化し、子プロセスの実行条件はトップレベル `[python]` を使う。
 
-| dataset | 内容 | 主な必須入力 |
-| --- | --- | --- |
-| `search` | 商品種別別の銘柄検索 | `product`, `query` |
-| `recent` | 直近価格 | `product`, `name`、商品により`country` |
-| `historical` | 期間価格 | `product`, `name`, `from_date`, `to_date`、商品により`country` |
-| `information` | 商品基本情報 | `product`, `name`、商品により`country` |
-| `overview` | 市場概要 | `product` と商品別の `country` / `currency` / `group` |
-| `economic_calendar` | 経済指標カレンダー | なし |
-| `technical_indicators` | テクニカル指標 | `product`, `name`、商品により`country` |
-| `moving_averages` | 移動平均 | 同上 |
-| `pivot_points` | ピボットポイント | 同上 |
+| dataset                | 内容                 | 主な必須入力                                                   |
+| ---------------------- | -------------------- | -------------------------------------------------------------- |
+| `search`               | 商品種別別の銘柄検索 | `product`, `query`                                             |
+| `recent`               | 直近価格             | `product`, `name`、商品により`country`                         |
+| `historical`           | 期間価格             | `product`, `name`, `from_date`, `to_date`、商品により`country` |
+| `information`          | 商品基本情報         | `product`, `name`、商品により`country`                         |
+| `overview`             | 市場概要             | `product` と商品別の `country` / `currency` / `group`          |
+| `economic_calendar`    | 経済指標カレンダー   | なし                                                           |
+| `technical_indicators` | テクニカル指標       | `product`, `name`、商品により`country`                         |
+| `moving_averages`      | 移動平均             | 同上                                                           |
+| `pivot_points`         | ピボットポイント     | 同上                                                           |
 
 商品種別は `stock`、`etf`、`fund`、`index`、`currency_cross`、`commodity`、`bond`、`certificate`、`crypto`。テクニカル分析は `crypto` に対応しない。
 
@@ -165,4 +185,3 @@ yfinanceはYahoo公式SDKではなく、yfinanceプロジェクトのドキュ�
 - [Investing.comのAPI非提供案内](https://pro.investing-support.com/hc/en-us/articles/4408847632017-Do-You-Offer-API-Access-at-Investing-com)
 - [Investing.com利用規約](https://cdn.investing.com/about-us/terms_and_conditions.pdf)
 
-investpyプロジェクトは、Investing.com側のAPIと保護方式の変更により現在正常動作しない旨を警告している。さらにInvesting.com自身も公開APIを提供していないと案内している。Webページの自動抽出にはInvesting.comとデータ権利者の規約が適用されるため、書面許諾と動作確認の両方がない環境では有効化しない。

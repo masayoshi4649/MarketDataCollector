@@ -65,7 +65,7 @@ max_response_bytes = 16777216
 
 `plan` と `addons` は `datalist` に掲載するdatasetを制限する。Standardプラン、アドオンなしでは17データAPIとBulk API 2件の合計19 datasetを掲載し、cursor入力は公開しない。cursorはPremiumの `fins_summary`・`fins_details` とTDnetアドオンの `td_list` でだけ利用できる。Freeプランにアドオンを設定すると起動時に拒否する。詳細な30件の対応表は [J-Quants API v2 対応状況](jquants.md) に集約する。
 
-同梱の `default.toml` では `jquants` が無効なため、現在の `datalist` は3 providerである。Git管理外のローカル設定で `jquants` を有効化すると、4 providerになる。
+同梱の `default.toml` では `jquants` が無効なため、現在の `datalist` は `225225jp`、`polymarket`、`yfinance`、`investingpy` の4 providerである。Git管理外のローカル設定で `jquants` を有効化すると、5 providerになる。
 
 `enabled=true` の場合だけ `api_key` を必須とする。providerはAPIキーを応答とmetadataに出力しない。不正なAPIキー設定の検証エラーも、値自体を含めず設定パスだけを示す。通信エラーはAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持するため、queryへ独自の秘密値を入れない。
 
@@ -76,6 +76,37 @@ HTTPリダイレクトは通常どおり追跡する。同一originでは `x-api
 全J-Quants要求はプロセス内で共有する単一FIFOキューへ受付順に入り、基本・財務・株価分足／ティック・TDnetの独立quotaにより [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)の50%で開始する。実効上限は基本枠がFree 2.5、Light 30、Standard 60、Premium 250要求/分、追加枠が財務30、株価分足・ティック30、TDnet 50要求/分である。キューとquotaはプロセス内だけで共有し、429を自動再試行しない。
 
 [公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)は総ページ数、総件数、現在ページを返さない。本providerは1要求1ページとし、同じ検索条件へ最新 `pagination_key` を指定して継続し、キーが返らなくなった応答で完了と判断する。cursorは [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md) に従う日本時間当日の差分用の不透明値で、対象3 APIの最終ページにだけ返る。値を解釈・加工せず受け渡すが、pagination keyとcursorの自動追跡や永続化は行わない。
+
+## `[providers.polymarket]`
+
+Polymarketの公開Gamma、CLOB、Data APIへ直接接続する、認証不要・読取専用のGoネイティブprovider設定である。Python設定は使用しない。
+
+| 項目                 | 既定値                             | 制約・内容                                                                                             |
+| -------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `enabled`            | `true`                             | Polymarket収集を許可する。`true` でも通信は `collect` 時だけであり、起動時と `datalist` では通信しない |
+| `gamma_base_url`     | `https://gamma-api.polymarket.com` | HTTP/HTTPSのGamma APIオリジン。userinfo、パス、クエリ、フラグメントは指定不可                          |
+| `clob_base_url`      | `https://clob.polymarket.com`      | HTTP/HTTPSのCLOB APIオリジン。同じURL制約を適用                                                        |
+| `data_base_url`      | `https://data-api.polymarket.com`  | HTTP/HTTPSのData APIオリジン。同じURL制約を適用                                                        |
+| `timeout`            | `15s`                              | 1秒～5分。Polymarketへの1 HTTP要求期限。FIFOキュー待機は上位の要求期限対象                             |
+| `user_agent`         | `MarketDataCollector/0.1`          | 3 APIへ送るUser-Agent。空文字とHTTP headerで禁止された制御文字は不可                                   |
+| `max_response_bytes` | `16777216`                         | 1～64 MiB。未圧縮・Gzip圧縮・展開後のHTTP応答本文上限。既定は16 MiB                                    |
+
+```toml
+[providers.polymarket]
+enabled = true
+gamma_base_url = "https://gamma-api.polymarket.com"
+clob_base_url = "https://clob.polymarket.com"
+data_base_url = "https://data-api.polymarket.com"
+timeout = "15s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+実オリジンは公式HTTPSから変更しない。`http` は隔離したローカルテスト先のために許可している。3 APIへAPIキーやwallet署名を送らず、固定許可した公開GETだけを実行する。
+
+全Polymarket要求はプロセス内で共有する単一FIFOキューへ入り、1件ずつ、[公式レートリミット](https://docs.polymarket.com/api-reference/rate-limits)の50%以下で開始する。キュー待機は要求contextの期限対象で、429を自動再試行しない。ページングは検索の `page`、Gamma応答の `next_cursor` から次回の `after_cursor`、CLOBの `next_cursor`、Dataの `offset` を呼び出し側が管理し、自動追跡・結合しない。ページング対象では `total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ返す。Dataのoffset型応答では `has_more_known=false` とし、完了や次のoffsetを推測しない。
+
+JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化する。`max_response_bytes` を超える本文、不正JSON、余分なJSON値、非成功HTTP状態はエラーにする。詳細な37 dataset、`/price` の公式資料間の `side` 不整合、未実装範囲、規約と地域制限は [Polymarket公開API対応状況](polymarket.md) を参照する。
 
 ## `[providers.yfinance]`
 
@@ -118,9 +149,4 @@ Python要求は `max_concurrent_processes` の専用枠を取得して子プロ�
 - 旧 `[providers.python]` のPython実行項目をトップレベル `[python]` へ移す。
 
 ## ネットワーク公開時の注意
-
-アプリケーションは常に全インターフェースで待ち受け、Origin制限を行わない。CORSは `Access-Control-Allow-Origin: *` であり、ブラウザを含む任意Originから利用できる。CORSはアクセス制御ではない。
-
-したがって、サーバーへ到達可能な利用者は全員、RESTとMCPから収集処理を実行できる。操作が読取専用でも、外部providerへの通信、上流負荷、利用規約・データ利用条件のリスクは残る。J-Quantsを有効にすると、到達可能な第三者も保存済みAPIキーの利用枠を消費し、取得データを閲覧できる。
-
 意図しない利用者から隔離する場合は、OSファイアウォール、コンテナや仮想ネットワーク、TLS・レート制限を提供するリバースプロキシで到達範囲を制御する。あわせてOS側のCPU・メモリ・プロセス制限を適用する。

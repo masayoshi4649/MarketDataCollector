@@ -31,8 +31,6 @@ max_concurrent_processes = 2
 
 各providerの `enabled` は独立しています。同梱の `conf/default.toml` では両方とも `true` です。`true` のproviderだけが `datalist` に掲載され、`false` のproviderを `collect` に指定すると `NOT_FOUND` になります。トップレベルの `[python]` が共有実行設定です。`max_concurrent_processes` はyfinanceとinvestingpyで共有する専用枠で、既定値は2、範囲は1～8です。枠待ちもPython処理の `timeout` に含まれます。
 
-Investing.comは公開APIを提供していないと案内しており、Webページの自動抽出には同社とデータ権利者の規約が適用されます。利用条件と書面許諾を確認できない環境では `[providers.investingpy].enabled` を `true` にしないでください。一次資料は [Provider仕様](../docs/providers.md#investingpy) にまとめています。
-
 ## 入出力
 
 入力例:
@@ -55,12 +53,12 @@ Investing.comは公開APIを提供していないと案内しており、Webペ�
 
 終了コードは次のとおりです。
 
-| 終了コード | `kind` | 内容 |
-| --- | --- | --- |
-| `0` | なし | 成功 |
-| `2` | `INVALID_ARGUMENT` | 入力JSON、provider、dataset、parametersが不正 |
-| `3` | `PROVIDER_UNAVAILABLE` | import、実行環境、外部返却値の安全な正規化に失敗 |
-| `4` | `UPSTREAM_ERROR` | provider関数または上流通信に失敗 |
+| 終了コード | `kind`                 | 内容                                             |
+| ---------- | ---------------------- | ------------------------------------------------ |
+| `0`        | なし                   | 成功                                             |
+| `2`        | `INVALID_ARGUMENT`     | 入力JSON、provider、dataset、parametersが不正    |
+| `3`        | `PROVIDER_UNAVAILABLE` | import、実行環境、外部返却値の安全な正規化に失敗 |
+| `4`        | `UPSTREAM_ERROR`       | provider関数または上流通信に失敗                 |
 
 標準入力、標準出力、標準エラーはOS localeによらずUTF-8 strictへ固定します。Go側はPythonを `-I` で起動し、Windows実行、PATH、一時ディレクトリ、locale・timezone、TLS証明書に必要な環境変数だけを渡します。この分離はOS sandboxではないため、公開運用ではOSまたはコンテナ側でもCPU、メモリ、プロセス数、ファイル・ネットワーク権限を制限してください。
 

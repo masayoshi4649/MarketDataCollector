@@ -13,10 +13,10 @@ import (
 )
 
 /*
-TestBuildCollectorsRegistersOnlyDefaultEnabledProvider は、初期provider構成を検証します。
+TestBuildCollectorsRegistersDefaultEnabledProviders は、初期provider構成を検証します。
 
 機能:
-  - 既定で有効な225225.jpだけを登録する
+  - 既定で有効な225225.jpとPolymarketを設定順に登録する
   - 既定で無効なJ-QuantsおよびPython providerを一覧から除外する
 
 引数:
@@ -25,17 +25,17 @@ TestBuildCollectorsRegistersOnlyDefaultEnabledProvider は、初期provider構�
 返り値:
   - なし
 */
-func TestBuildCollectorsRegistersOnlyDefaultEnabledProvider(t *testing.T) {
+func TestBuildCollectorsRegistersDefaultEnabledProviders(t *testing.T) {
 	collectors, err := buildCollectors(config.Default())
 	if err != nil {
 		t.Fatalf("buildCollectors() error = %v", err)
 	}
-	if len(collectors) != 1 {
-		t.Fatalf("provider件数 = %d, 1を期待", len(collectors))
+	if len(collectors) != 2 {
+		t.Fatalf("provider件数 = %d, 2を期待", len(collectors))
 	}
-	descriptor := collectors[0].Descriptor()
-	if descriptor.Name != "225225jp" {
-		t.Errorf("provider = %+v, 225225jpを期待", descriptor)
+	providerNames := []string{collectors[0].Descriptor().Name, collectors[1].Descriptor().Name}
+	if providerNames[0] != "225225jp" || providerNames[1] != "polymarket" {
+		t.Errorf("provider順 = %v, [225225jp polymarket]を期待", providerNames)
 	}
 }
 
@@ -61,6 +61,7 @@ func TestBuildCollectorsRegistersJQuantsProviderForStandardPlan(t *testing.T) {
 	cfg.Providers.JQuants.APIKey = "test-api-key"
 	cfg.Providers.JQuants.Plan = "standard"
 	cfg.Providers.JQuants.Addons = []string{}
+	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = false
 	cfg.Providers.InvestingPy.Enabled = false
 
@@ -77,6 +78,45 @@ func TestBuildCollectorsRegistersJQuantsProviderForStandardPlan(t *testing.T) {
 	}
 	if len(descriptor.Datasets) != 19 {
 		t.Errorf("Standardのデータセット件数 = %d, 19を期待", len(descriptor.Datasets))
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestBuildCollectorsRegistersPolymarketProvider は、Polymarket providerの登録を検証します。
+
+機能:
+  - Polymarketだけを有効にして公開3 API用クライアントとcollectorを生成する
+  - provider名と公開されるデータセット件数を確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestBuildCollectorsRegistersPolymarketProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.Nikkei225JP.Enabled = false
+	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.Polymarket.Enabled = true
+	cfg.Providers.YFinance.Enabled = false
+	cfg.Providers.InvestingPy.Enabled = false
+
+	collectors, err := buildCollectors(cfg)
+	if err != nil {
+		t.Fatalf("buildCollectors() error = %v", err)
+	}
+	if len(collectors) != 1 {
+		t.Fatalf("provider件数 = %d, 1を期待", len(collectors))
+	}
+	descriptor := collectors[0].Descriptor()
+	if descriptor.Name != "polymarket" {
+		t.Errorf("provider = %+v, polymarketを期待", descriptor)
+	}
+	if len(descriptor.Datasets) != 37 {
+		t.Errorf("Polymarketのデータセット件数 = %d, 37を期待", len(descriptor.Datasets))
 	}
 }
 
@@ -101,6 +141,7 @@ func TestBuildCollectorsRegistersPythonProvidersIndependently(t *testing.T) {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	cfg := config.Default()
+	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = true
 	cfg.Python.Executable = executable
 	cfg.Python.Script = "main.go"
@@ -122,7 +163,7 @@ func TestBuildCollectorsRegistersPythonProvidersIndependently(t *testing.T) {
 TestBuildCollectorsAllowsAllProvidersDisabled は、全providerを一覧から外せることを検証します。
 
 機能:
-  - 3つのenabledがすべてfalseの場合に空のprovider一覧を返す
+  - 5つのenabledがすべてfalseの場合に空のprovider一覧を返す
   - 使用しないHTTPクライアントやPython runnerを生成しない
 
 引数:
@@ -135,6 +176,7 @@ func TestBuildCollectorsAllowsAllProvidersDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers.Nikkei225JP.Enabled = false
 	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = false
 	cfg.Providers.InvestingPy.Enabled = false
 
