@@ -125,7 +125,7 @@ PolymarketはPython adapterを経由せず、GoのHTTPクライアントから�
 
 Python専用枠の待機を含めてPython処理期限を適用するため、待機要求が無制限に子プロセス化されることはない。この専用枠はOS resource制限の代替ではない。
 
-MCPの `datalist` は固定階層、`collect` は共通外枠のoutput schemaを公開する。`collect.data` はprovider固有の動的JSON値として型を限定しない。成功値を一度だけJSON化してstructured contentとtext contentの両方へ同じ生JSONを設定し、SDKのJSON Schema適用時に発生するfloat64再変換を避ける。これにより大整数を丸めず、RESTのJSONと送信値を一致させる。
+MCPの `datalist` は固定階層、`collect` は共通外枠のoutput schemaを公開する。SchemaはRESTと共有するdomain型の `json`・`jsonschema` タグから生成し、DTOとSchemaの構造を二重定義しない。`collect.data` はprovider固有の動的JSON値として型を限定しない。成功値を一度だけJSON化してstructured contentとtext contentの両方へ同じ生JSONを設定し、SDKのJSON Schema適用時に発生するfloat64再変換を避ける。これにより大整数を丸めず、RESTのJSONと送信値を一致させる。
 
 ## エラー境界
 

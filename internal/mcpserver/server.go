@@ -61,6 +61,18 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	if logger == nil {
 		logger = slog.Default()
 	}
+	dataListOutputSchema, err := outputSchemaFor[domain.DataList](
+		"利用可能な市場データprovider、dataset、入力項目の一覧です。",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("datalistのoutput schemaを生成できません: %w", err)
+	}
+	collectOutputSchema, err := outputSchemaFor[domain.CollectResponse](
+		"指定したproviderから収集した市場データです。",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("collectのoutput schemaを生成できません: %w", err)
+	}
 
 	server := &Server{service: service, logger: logger}
 	protocolServer := mcp.NewServer(
@@ -82,7 +94,7 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	mcp.AddTool(protocolServer, &mcp.Tool{
 		Name:         "datalist",
 		Description:  "利用可能なprovider、dataset、入力項目を返します。外部通信は行いません。RESTのGET /api/datalistと同じ仕様です。",
-		OutputSchema: json.RawMessage(dataListOutputSchemaJSON),
+		OutputSchema: dataListOutputSchema,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ一覧",
 			ReadOnlyHint:    readOnly,
@@ -94,7 +106,7 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	mcp.AddTool(protocolServer, &mcp.Tool{
 		Name:         "collect",
 		Description:  "providerとdatasetを指定し、要求時に市場情報を収集して返します。RESTのPOST /api/collectと同じ入力・出力です。",
-		OutputSchema: json.RawMessage(collectOutputSchemaJSON),
+		OutputSchema: collectOutputSchema,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ収集",
 			ReadOnlyHint:    readOnly,

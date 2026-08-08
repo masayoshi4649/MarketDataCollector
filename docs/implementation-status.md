@@ -63,7 +63,7 @@
 21. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
 22. Polymarket JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化し、本文サイズを設定値で制限する。
 23. CLOB `/price` の公式資料が `side` の意味を逆に記載するため、2026年8月8日のOpenAPI/API Referenceと実測を優先し、best bidを `BUY`、best askを `SELL` へ対応させる。
-24. MCPは `datalist` の固定階層と `collect` の共通外枠をoutput schemaとして公開する。成功値は同じ生JSONをstructured contentとtext contentへ設定し、provider固有の動的値と大整数の精度を維持する。
+24. MCPは `datalist` の固定階層と `collect` の共通外枠を、共通domain型から生成したoutput schemaとして公開する。成功値は同じ生JSONをstructured contentとtext contentへ設定し、provider固有の動的値と大整数の精度を維持する。
 
 ## J-Quants API v2の実装基準
 

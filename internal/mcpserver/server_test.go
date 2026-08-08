@@ -177,6 +177,60 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 // ----------------------------------------
 
 /*
+TestOutputSchemaForUsesDomainTypes は、Go型から生成するoutput schemaを検証します。
+
+機能:
+  - DataListの入れ子配列と説明がdomain型から生成されることを確認する
+  - CollectResponseの日時、動的metadata、動的dataが正しく表現されることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestOutputSchemaForUsesDomainTypes(t *testing.T) {
+	dataListSchema, err := outputSchemaFor[domain.DataList]("データ一覧")
+	if err != nil {
+		t.Fatalf("DataList output schema生成 error = %v", err)
+	}
+	providersSchema := dataListSchema.Properties["providers"]
+	if providersSchema == nil || providersSchema.Type != "array" || providersSchema.Items == nil {
+		t.Fatalf("providers schema = %+v, 要素定義付きarrayを期待", providersSchema)
+	}
+	datasetsSchema := providersSchema.Items.Properties["datasets"]
+	if datasetsSchema == nil || datasetsSchema.Type != "array" || datasetsSchema.Items == nil {
+		t.Fatalf("datasets schema = %+v, 要素定義付きarrayを期待", datasetsSchema)
+	}
+	parametersSchema := datasetsSchema.Items.Properties["parameters"]
+	if parametersSchema == nil || parametersSchema.Type != "array" || parametersSchema.Items == nil {
+		t.Fatalf("parameters schema = %+v, 要素定義付きarrayを期待", parametersSchema)
+	}
+	if parametersSchema.Description == "" {
+		t.Error("parameters schemaにdomain型の説明を期待")
+	}
+
+	collectSchema, err := outputSchemaFor[domain.CollectResponse]("収集結果")
+	if err != nil {
+		t.Fatalf("CollectResponse output schema生成 error = %v", err)
+	}
+	collectedAtSchema := collectSchema.Properties["collected_at"]
+	if collectedAtSchema == nil || collectedAtSchema.Type != "string" || collectedAtSchema.Format != "date-time" {
+		t.Errorf("collected_at schema = %+v, date-time文字列を期待", collectedAtSchema)
+	}
+	metadataSchema := collectSchema.Properties["metadata"]
+	if metadataSchema == nil || metadataSchema.Type != "object" || metadataSchema.AdditionalProperties == nil {
+		t.Errorf("metadata schema = %+v, 任意項目を持つobjectを期待", metadataSchema)
+	}
+	dataSchema := collectSchema.Properties["data"]
+	if dataSchema == nil || dataSchema.Type != "" || len(dataSchema.Types) != 0 {
+		t.Errorf("data schema = %+v, 型制限なしを期待", dataSchema)
+	}
+}
+
+// ----------------------------------------
+
+/*
 TestNewStructuredToolResultPreservesRawJSON は、MCP成功結果のJSON表現を検証します。
 
 機能:
