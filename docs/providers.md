@@ -9,7 +9,7 @@
 - 欠測値は推測で埋めず `null` または配信元の空値として保持する。
 - provider固有の変化へ対応できるよう、共通外枠とdataset固有 `data` を分離する。
 - Python providerのmetadataには、ライブラリ情報に加えて `source_name`、`source_url`、`unofficial_client`、`terms_url` を付与する。
-- providerの有効状態は `[providers.nikkei225jp]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
+- providerの有効状態は `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
 
 ## `225225jp`
 
@@ -53,6 +53,45 @@
 ### 注意
 
 これらは公開APIとして互換性保証されたURLではない。形式変更時は厳格パーサーがエラーにし、誤った数値を黙って返さない。休場時は正常応答でも値が古い場合があるため、`fetched_at` と `market_time` を区別する。ローカルに上流レスポンスを保持しないため、同じ要求の繰り返しも225225.jpへの通信と負荷を発生させる。
+
+## `jquants`
+
+J-Quants API v2を公式オリジン `https://api.jquants.com` の固定パスから取得するGoネイティブproviderである。Pythonと外部クライアントライブラリは使用しない。`[providers.jquants]` の `plan` と `addons` により、契約上取得できるdatasetだけを `datalist` に掲載する。
+
+Standardプラン、アドオンなしでは、17データAPIと `bulk_list`、`bulk_get` の合計19 datasetを掲載する。Premium限定データとアドオン限定データを含む詳細な30件の表は [J-Quants API v2 対応状況](jquants.md) に集約し、ここでは重複させない。
+
+### 取得契約
+
+- 1回の `collect` は上流APIへ1回だけ要求し、1ページを返す。全ページの自動取得・結合は行わない。
+- 上流応答全体をproviderの `data` に格納するため、`pagination_key`、`cursor`、署名付きURLを失わない。
+- [公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)は総ページ数、総件数、現在ページを返さない。後続ページは検索条件を変えず、前回応答の最新 `pagination_key` を指定する。キーが返らなくなった応答で全件取得完了と判断するため、事前の全ページ数や進捗率は提供できない。
+- `cursor` は日本時間の当日差分取得に使う公式の不透明値で、対象は `fins_summary`、`fins_details`、`td_list` の3 datasetである。値を解釈・加工せず受け渡し、ページング時は最終ページにだけ返る。次回は同じ日本時間当日の `date` とcursorを指定するが、providerは自動追跡、永続化、自動差分取得を行わない。詳細は [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md) を参照する。
+- Standardプラン・アドオンなしではcursor入力を公開しない。`cursor` と `pagination_key` は同時に指定できない。
+- `Accept-Encoding: gzip` で取得し、`max_response_bytes` を未圧縮本文、Gzipヘッダーを含む圧縮本文、展開後本文へ適用する。既定は16 MiB、設定範囲は1～64 MiBである。
+- HTTP 210は2xxの成功応答として取得結果を返す。400は `INVALID_ARGUMENT`、401・403と429は `PROVIDER_UNAVAILABLE`、5xxとその他の非2xxは `UPSTREAM_ERROR` に分類する。
+- providerは全J-Quants要求で共有するプロセス内の単一FIFOキューを使い、受付順を厳密に維持する。基本・財務・株価分足／ティック・TDnetの独立quotaにより、[公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)の50%で要求を開始する。基本枠はFree 2.5、Light 30、Standard 60、Premium 250要求/分、追加枠は財務30、株価分足・ティック30、TDnet 50要求/分である。財務APIは基本枠と財務枠の両方、アドオンAPIと対象Bulk要求は対応する独立quotaを使う。
+- 429の自動再試行は行わない。FIFOキューとquotaはプロセス内でのみ共有されるため、同じAPIキーを複数プロセスから使う場合は利用枠を呼び出し側で合算する。
+
+BulkとTDnetのダウンロード系datasetは、J-Quantsが発行した署名付きURLをそのまま返す。MarketDataCollector自体はそのURLへ接続せず、CSV、PDF、XBRL、gzipファイルの取得、展開、保存を行わない。BulkのURLは5分、TDnetのURLは15分の有効期限があるため、呼び出し側が必要な場合だけ使用する。
+
+### APIキーとデータ利用
+
+実APIキーはGit管理外の `conf/*.local.toml` にだけ保存する。providerは `x-api-key` ヘッダーだけへキーを設定し、応答とmetadataには含めない。HTTPリダイレクトは通常どおり追跡し、同一originではキーを維持し、異なるoriginでは `x-api-key` だけを除去する。
+
+通信エラーではAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持する。APIキー以外のquery値は秘密値として自動マスクしないため、固定入力へ独自の秘密値を入れない。非2xxの上流本文は公開応答やmetadataへ保持しない。
+
+実APIキーを使う `base_url` は公式HTTPSから変更しない。設定上のHTTP許可は隔離したテスト先用であり、HTTPで実キーを送ると暗号化されない。
+
+本サーバーは全ネットワークインターフェースで待ち受け、CORSは `*` である。到達可能な利用者はAPIキーを知らなくてもJ-Quantsの契約利用枠を消費し、取得データを閲覧できる。J-Quantsデータの第三者配信に該当するおそれがあるため、契約上許可された利用者だけが到達できるよう、OSファイアウォール、プライベートネットワーク、認証付きリバースプロキシなどで制限する。
+
+仕様確認日は2026年8月8日であり、[公式リリース履歴](https://jpx-jquants.com/ja/spec/release.md)の2026年8月3日リリースまでを確認している。新しいendpointやプラン変更は自動反映されないため、更新時は [確認基準と将来更新手順](jquants.md) も参照する。
+
+一次資料:
+
+- [J-Quants API v2仕様](https://jpx-jquants.com/ja/spec.md)
+- [契約別APIとデータ格納期間](https://jpx-jquants.com/ja/spec/data-spec.md)
+- [レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)
+- [レスポンスステータス](https://jpx-jquants.com/ja/spec/response-status.md)
 
 ## `yfinance`
 

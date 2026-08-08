@@ -13,18 +13,19 @@ REST APIとHTTP MCPは同じプロセスで起動します。データベース�
 
 Pythonの要否は、使用するproviderで決まります。
 
-| 使用するprovider | Python | Pythonパッケージ |
-| --- | --- | --- |
-| `225225jp` だけ | 不要 | 不要 |
-| `yfinance` | 必要 | 必要 |
-| `investingpy` | 必要 | 必要 |
-| `yfinance` と `investingpy` の両方 | 必要 | 必要 |
+| 使用するprovider                   | Python | Pythonパッケージ |
+| ---------------------------------- | ------ | ---------------- |
+| `225225jp` だけ                    | 不要   | 不要             |
+| `jquants`                          | 不要   | 不要             |
+| `yfinance`                         | 必要   | 必要             |
+| `investingpy`                      | 必要   | 必要             |
+| `yfinance` と `investingpy` の両方 | 必要   | 必要             |
 
 配布物の `conf/default.toml` では、現在 `yfinance` と `investingpy` が両方とも `enabled=true` です。その設定を変更せずに起動する場合は、Python環境を先に構築してください。
 
 yfinanceとinvestpyは取得元の公式SDKではありません。適用される利用条件とデータ利用権を確認したproviderだけを有効にしてください。特に `investingpy` は、Investing.comとデータ権利者から必要な許諾を確認できない環境では `enabled=false` にしてください。
 
-Pythonを使用しない場合は、`conf/90-runtime.local.toml` を作成して次の内容を保存します。後から読み込まれるこのファイルで両providerを無効にすれば、Python本体、仮想環境、Pythonパッケージはすべて不要です。
+Pythonを使用しない場合は、`conf/zz-runtime.local.toml` を作成して次の内容を保存します。`default.toml` より後から読み込まれるこのファイルで両providerを無効にすれば、Python本体、仮想環境、Pythonパッケージはすべて不要です。
 
 ```toml
 [providers.yfinance]
@@ -34,6 +35,38 @@ enabled = false
 enabled = false
 ```
 
+`jquants` はGoネイティブproviderのため、他のproviderと同時に有効化してもPythonの要否に影響しません。
+
+### 2.1 J-Quantsを利用する場合
+
+J-QuantsのサブスクリプションとAPIキーを用意します。実APIキーは、Git管理外の `conf/*.local.toml` にだけ保存してください。`conf/default.toml`、`conf/conf.toml.sample`、文書、その他の追跡対象ファイルに実際のキーを記載してはいけません。
+
+`conf/zz-jquants.local.toml` を作成し、次の値を契約と実行環境に合わせます。この名前は `default.toml` より後に読み込まれるため、既定値を確実に上書きします。`YOUR_JQUANTS_API_KEY` は説明用のプレースホルダーです。
+
+```toml
+[providers.jquants]
+enabled = true
+base_url = "https://api.jquants.com"
+api_key = "YOUR_JQUANTS_API_KEY"
+plan = "standard"
+addons = []
+timeout = "30s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+`plan` は `free`、`light`、`standard`、`premium` から契約中のものを指定します。`addons` には契約済みの `minute` または `tdnet` だけを指定し、Freeプランでは空配列にします。Standardプラン、アドオンなしでは、17データAPIとBulk API 2件の合計19 datasetが `datalist` に掲載されます。詳細な30件の対応表は [J-Quants API v2 対応状況](jquants.md) を参照してください。
+
+`max_response_bytes` は既定16 MiB、設定範囲1～64 MiBです。未圧縮本文、Gzipヘッダーを含む圧縮本文、Gzip展開後本文のいずれにも適用されます。通常のHTTPリダイレクトは追跡し、同一originでは `x-api-key` を維持し、異なるoriginでは同ヘッダーだけを除去します。
+
+全J-Quants要求をプロセス内で共有する単一FIFOキューへ受付順に入れ、基本・財務・株価分足／ティック・TDnetの独立quotaで [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)の50%に抑えます。実効上限は基本枠がFree 2.5、Light 30、Standard 60、Premium 250要求/分、財務30、株価分足・ティック30、TDnet 50要求/分です。キューとquotaはプロセス内だけで共有され、429を自動再試行しません。
+
+ページングは1要求1ページです。[公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)には総ページ数、総件数、現在ページがないため、同じ検索条件へ最新 `pagination_key` を指定して継続し、キーが返らなくなれば完了です。`cursor` は `fins_summary`、`fins_details`、`td_list` の日本時間当日差分取得用の不透明値で、最終ページにだけ返ります。値を解釈・加工せず受け渡しますが、自動追跡や永続化は行いません。Standardプラン・アドオンなしではcursor入力を公開しません。詳細は [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md) を参照してください。
+
+このサーバーは全ネットワークインターフェースで待ち受け、CORSは `*` です。到達可能な第三者はAPIキーを知らなくてもJ-Quantsの利用枠を消費し、取得データを閲覧できます。データの第三者配信に該当するおそれがあるため、J-Quantsを有効化したサーバーをそのまま外部公開しないでください。
+
+通信エラーではAPIキーの完全一致だけを伏せ、URLやqueryなどの診断情報は保持します。queryへ独自の秘密値を入れないでください。
+
 ## 3. 必要環境
 
 ### 3.1 ビルド済みバイナリを実行する場合
@@ -42,6 +75,7 @@ enabled = false
 - 225225.jpなど取得元へ接続できるHTTPS通信環境
 - Linuxでは通常、OSのCA証明書一式
 - Python providerを使用する場合だけ、64ビット版CPython 3.12以上
+- J-Quants providerを使用する場合は、J-Quants APIへのHTTPS通信、契約プラン、有効なAPIキー
 
 Pythonの固定依存はCPython 3.14 / Windowsで検証しています。現在の `requirements.lock.txt` はPython 3.12未満では導入できないため、手順上の下限を3.12とします。
 
@@ -61,6 +95,7 @@ dist/
 ├─ linux-amd64/
 │  ├─ MarketDataCollector
 │  ├─ SETUP.md
+│  ├─ jquants.md
 │  ├─ conf/
 │  │  ├─ default.toml
 │  │  └─ conf.toml.sample
@@ -71,6 +106,7 @@ dist/
 └─ windows-amd64/
    ├─ MarketDataCollector.exe
    ├─ SETUP.md
+   ├─ jquants.md
    ├─ conf/
    │  ├─ default.toml
    │  └─ conf.toml.sample
@@ -80,7 +116,7 @@ dist/
       └─ requirements.lock.txt
 ```
 
-`conf.toml.sample` は説明用であり、拡張子が `.sample` のため自動では読み込まれません。実際の変更値は `conf/90-runtime.local.toml` など、拡張子が `.toml` の別ファイルへ記載してください。
+`conf.toml.sample` は説明用であり、拡張子が `.sample` のため自動では読み込まれません。実際の変更値は `default.toml` より後へ並ぶ `conf/zz-runtime.local.toml` など、拡張子が `.toml` の別ファイルへ記載してください。J-Quantsの実APIキーを記載するファイルは、必ず `conf/*.local.toml` としてGit管理から除外します。
 
 ## 5. Windows amd64への配置
 
@@ -96,7 +132,7 @@ Set-Location C:\Services\MarketDataCollector
 
 ### 5.2 Pythonを使用しない場合
 
-「2. Pythonが必要になる条件」にある内容で `conf/90-runtime.local.toml` を作成し、次を実行します。
+「2. Pythonが必要になる条件」にある内容で `conf/zz-runtime.local.toml` を作成し、次を実行します。
 
 ```powershell
 .\MarketDataCollector.exe
@@ -116,7 +152,7 @@ py -3.14 -m venv .venv
 
 Python 3.12または3.13を利用する場合は、1行目の `-3.14` を実際の版へ変更します。`py` コマンドがない環境では、インストールした `python.exe` の絶対パスで `-m venv .venv` を実行します。
 
-`conf/90-runtime.local.toml` を作成し、仮想環境と同梱アダプターを指定します。
+`conf/zz-runtime.local.toml` を作成し、仮想環境と同梱アダプターを指定します。
 
 ```toml
 [python]
@@ -152,7 +188,7 @@ Linux側でHTTPS通信に必要なCA証明書が未導入の場合は、使用�
 
 ### 6.2 Pythonを使用しない場合
 
-「2. Pythonが必要になる条件」にある内容で `conf/90-runtime.local.toml` を作成し、次を実行します。
+「2. Pythonが必要になる条件」にある内容で `conf/zz-runtime.local.toml` を作成し、次を実行します。
 
 ```bash
 ./MarketDataCollector
@@ -174,7 +210,7 @@ python3 -m venv .venv
 
 固定依存一式の実動作検証済み環境はWindowsです。Linuxでは対象サーバー上でインストールと後述のimport確認を必ず実施してください。利用するLinuxとPythonの組み合わせに対応するwheelがない場合、pipがソースビルドを選択し、C/C++コンパイラーや各ライブラリの開発用パッケージが追加で必要になることがあります。
 
-`conf/90-runtime.local.toml` を作成します。
+`conf/zz-runtime.local.toml` を作成します。
 
 ```toml
 [python]
@@ -199,10 +235,10 @@ enabled = true
 
 アプリケーションが直接利用するパッケージは次の2つです。
 
-| 公開provider名 | インストールするパッケージ | import名 | 固定版 |
-| --- | --- | --- | --- |
-| `yfinance` | `yfinance` | `yfinance` | `1.5.2` |
-| `investingpy` | `investpy` | `investpy` | `1.0.8` |
+| 公開provider名 | インストールするパッケージ | import名   | 固定版  |
+| -------------- | -------------------------- | ---------- | ------- |
+| `yfinance`     | `yfinance`                 | `yfinance` | `1.5.2` |
+| `investingpy`  | `investpy`                 | `investpy` | `1.0.8` |
 
 `investingpy` というPyPIパッケージは使用しません。外部へ公開するprovider識別子だけが `investingpy` であり、実際に導入するパッケージは `investpy` です。
 
@@ -268,7 +304,7 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/datalist
 ```
 
-`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば構築完了です。現在の同梱設定を変更していなければ、`225225jp`、`yfinance`、`investingpy` の3件が掲載されます。ただし `datalist` はPythonパッケージのimportまでは行わないため、Python側は前述の `pip check` とimport確認も実施してください。
+`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば構築完了です。現在の同梱設定を変更していなければ、`225225jp`、`yfinance`、`investingpy` の3件が掲載されます。Git管理外のローカル設定で `jquants` も有効化した場合は、4 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はPythonパッケージのimportまでは行わないため、Python側は前述の `pip check` とimport確認も実施してください。
 
 既定の待受は全ネットワークインターフェースのTCP 8080番です。到達範囲はOSまたはネットワーク側のファイアウォールで調整してください。
 
@@ -344,17 +380,20 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 - `python/collector.py`
 - `python/requirements.txt`
 - `python/requirements.lock.txt`
+- `docs/jquants.md` を `jquants.md` という名前でコピー
 - この手順書を `SETUP.md` という名前でコピー
 
 ## 10. 主な起動エラー
 
-| 状況 | 確認箇所 |
-| --- | --- |
-| Python実行ファイルが見つからない | `python.executable` のパスと、providerの `enabled` |
-| Pythonアダプターを参照できない | `python.script` とカレントディレクトリ |
-| `PROVIDER_UNAVAILABLE` | 仮想環境へのlock一式の導入、import確認、Python版 |
-| TCP 8080番で起動できない | 同じポートを使用中の別プロセス、`SYSTEM.Port` |
-| Linuxで実行を拒否される | `chmod +x ./MarketDataCollector` の実行有無 |
-| 外部データを取得できない | DNS、HTTPS、CA証明書、取得元の状態、利用条件 |
+| 状況                                  | 確認箇所                                                             |
+| ------------------------------------- | -------------------------------------------------------------------- |
+| Python実行ファイルが見つからない      | `python.executable` のパスと、providerの `enabled`                   |
+| Pythonアダプターを参照できない        | `python.script` とカレントディレクトリ                               |
+| `PROVIDER_UNAVAILABLE`                | 仮想環境へのlock一式の導入、import確認、Python版                     |
+| J-Quants有効化時に起動できない        | `conf/*.local.toml` の `providers.jquants.api_key`、`plan`、`addons` |
+| J-Quants収集が `PROVIDER_UNAVAILABLE` | 契約プラン・アドオン、APIキー、利用枠、403/429応答                   |
+| TCP 8080番で起動できない              | 同じポートを使用中の別プロセス、`SYSTEM.Port`                        |
+| Linuxで実行を拒否される               | `chmod +x ./MarketDataCollector` の実行有無                          |
+| 外部データを取得できない              | DNS、HTTPS、CA証明書、取得元の状態、利用条件                         |
 
 `investpy==1.0.8` は参照先サイトの変更に追随しておらず、Python環境の構築に成功しても実データ取得が失敗する場合があります。

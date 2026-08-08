@@ -22,10 +22,10 @@ http://127.0.0.1:8080/mcp
 
 標準MCPはtoolごとのURIを定義しない。そのため `/mcp/datalist` や `/mcp/collect` という独自HTTP APIは公開しない。
 
-| MCP tool | REST | 共通処理 |
-| --- | --- | --- |
+| MCP tool   | REST                | 共通処理           |
+| ---------- | ------------------- | ------------------ |
 | `datalist` | `GET /api/datalist` | `service.DataList` |
-| `collect` | `POST /api/collect` | `service.Collect` |
+| `collect`  | `POST /api/collect` | `service.Collect`  |
 
 tool名、共通入力、共通出力をRESTの末尾操作名と一致させる。
 
@@ -62,6 +62,8 @@ tool annotationは読み取り専用、非破壊、閉じた世界として公�
 入力と出力は [REST API仕様](rest-api.md) の `/api/collect` と同じである。成功時は `domain.CollectResponse` をstructured contentとJSON text contentとして返す。
 
 provider固有 `data` は形が異なるため、toolの固定output schemaは公開しない。Go SDKのoutput schema適用が動的JSONをfloat64へ再変換しない経路を使い、structured contentとtext contentへ同じ生JSONを設定する。これにより2^53を超えるJSON整数もREST/MCPの送信時点では丸めず保持する。
+
+J-QuantsのページングとcursorもRESTと同じである。1回の `collect` は上流の1ページだけを取得し、返却された `pagination_key` または `cursor` はprovider固有 `data` 内に保持する。後続ページまたは差分は、同じ検索条件と返却キーを次の `collect` へ渡して取得する。
 
 tool annotationは読み取り専用、非破壊、外部接続ありとして公開する。要求時の市場データは時間により変わるため、idempotent hintはfalseとする。
 

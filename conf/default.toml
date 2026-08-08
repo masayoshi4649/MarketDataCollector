@@ -50,6 +50,32 @@ max_response_bytes = 4194304
 # 33554432バイト（32MiB）まで読み取り、長期間の履歴データにも余裕を持たせます。
 max_chart_response_bytes = 33554432
 
+[providers.jquants]
+# J-Quants providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
+# APIキーを追跡対象ファイルへ保存しないよう既定ではfalseとし、端末固有の.local.tomlで有効化します。
+enabled = false
+# J-Quants APIの固定パスを解決するHTTPオリジンです。単位はなく、http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
+# V2 APIの公式オリジンを利用するため、既定値はhttps://api.jquants.comです。
+base_url = "https://api.jquants.com"
+# J-Quants V2 APIのx-api-keyヘッダーへ設定する秘密値です。単位はなく、有効化時は空にできず、前後空白とHTTP制御文字は指定できません。
+# 実際のAPIキーはGit管理外でdefault.tomlより後に並ぶconf/zz-jquants.local.tomlへ保存し、この追跡対象ファイルには記載しません。
+api_key = ""
+# J-Quantsの契約プランです。単位はなく、free、light、standard、premiumのいずれかを指定します。
+# 現在利用する契約に合わせ、既定値はstandardです。
+plan = "standard"
+# 有効なJ-Quantsアドオン識別子の配列です。minuteとtdnetだけを指定でき、重複およびFreeプランでの指定は許可しません。
+# 現在の契約ではアドオンを利用しないため、既定値は空配列です。
+addons = []
+# J-Quants APIへのHTTP要求1件が完了するまで待つ時間です。単位はGoの期間文字列で、1s～5mを指定します。
+# 30sで通信を中止し、遅延した取得元を待つ要求処理が長時間継続しないようにします。
+timeout = "30s"
+# J-Quants APIへ送信するHTTP User-Agentヘッダー値です。単位はなく、空文字およびHTTPヘッダーで禁止された制御文字は指定できません。
+# 取得元のアクセスログで本アプリケーションからの通信を識別できるよう、製品名と版を指定します。
+user_agent = "MarketDataCollector/0.1"
+# J-Quants APIのHTTP応答本文として読み取る最大サイズです。単位はバイトで、1048576～67108864を指定します。
+# 16777216バイト（16MiB）は大きな表形式データを許可しつつ、応答バッファの肥大化を制限します。
+max_response_bytes = 16777216
+
 [providers.yfinance]
 # yfinance providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
 # trueの場合だけproviderを登録してdatalistへ掲載します。falseの場合は一覧から外れ、収集要求はNOT_FOUNDになります。

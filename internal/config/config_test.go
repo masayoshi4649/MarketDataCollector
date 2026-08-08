@@ -14,7 +14,7 @@ TestDefault は、Defaultが新しい責務分離後の既定値を返すこと�
 機能:
   - SYSTEMにHTTPサーバー共通制限だけが設定されることを確認する
   - Python共通実行設定がトップレベルに存在することを確認する
-  - 225225.jp固有HTTP設定と各providerの有効状態を確認する
+  - 225225.jpおよびJ-Quants固有HTTP設定と各providerの有効状態を確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -84,6 +84,46 @@ func TestDefault(t *testing.T) {
 			32*1024*1024,
 		)
 	}
+
+	// ----------------------------------------
+
+	jQuants := cfg.Providers.JQuants
+	if jQuants.Enabled || jQuants.BaseURL != "https://api.jquants.com" || jQuants.APIKey != "" {
+		t.Errorf(
+			"J-Quants基本設定 = (%t, %q, APIキー空=%t), 期待値は(false, %q, true)",
+			jQuants.Enabled,
+			jQuants.BaseURL,
+			jQuants.APIKey == "",
+			"https://api.jquants.com",
+		)
+	}
+	if jQuants.Plan != "standard" || len(jQuants.Addons) != 0 {
+		t.Errorf(
+			"J-Quants契約設定 = (%q, %v), 期待値は(%q, 空配列)",
+			jQuants.Plan,
+			jQuants.Addons,
+			"standard",
+		)
+	}
+	if jQuants.Timeout.Duration != 30*time.Second || jQuants.UserAgent != "MarketDataCollector/0.1" {
+		t.Errorf(
+			"J-Quants HTTP設定 = (%s, %q), 期待値は(%s, %q)",
+			jQuants.Timeout,
+			jQuants.UserAgent,
+			30*time.Second,
+			"MarketDataCollector/0.1",
+		)
+	}
+	if jQuants.MaxResponseBytes != 16*1024*1024 {
+		t.Errorf(
+			"J-Quants応答上限 = %d, 期待値は%d",
+			jQuants.MaxResponseBytes,
+			16*1024*1024,
+		)
+	}
+
+	// ----------------------------------------
+
 	if cfg.Providers.YFinance.Enabled || cfg.Providers.InvestingPy.Enabled {
 		t.Error("利用条件の確認が必要なPython providerが既定値で有効です")
 	}
@@ -95,9 +135,9 @@ func TestDefault(t *testing.T) {
 TestLoadDir は、分割したTOMLテーブルをファイル名順に統合することを検証します。
 
 機能:
-  - SYSTEM、python、3つのproviderテーブルを新構造へ復号する
+  - SYSTEM、python、4つのproviderテーブルを新構造へ復号する
   - 後順位ファイルが指定項目だけを上書きする
-  - yfinanceとinvestingpyを独立して有効化できることを確認する
+  - J-Quants、yfinance、investingpyを独立して有効化できることを確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -118,6 +158,11 @@ timeout = "2m"
 base_url = "https://mirror.example.test"
 timeout = "3s"
 
+[providers.jquants]
+enabled = true
+plan = "premium"
+timeout = "45s"
+
 [providers.yfinance]
 enabled = true
 `)
@@ -134,6 +179,14 @@ max_concurrent_processes = 3
 [providers.nikkei225jp]
 user_agent = "統合テスト/1.0"
 max_response_bytes = 131072
+
+[providers.jquants]
+base_url = "https://jquants.example.test"
+api_key = "integration-test-key"
+plan = "light"
+addons = ["minute", "tdnet"]
+user_agent = "J-Quants統合テスト/1.0"
+max_response_bytes = 33554432
 
 [providers.investingpy]
 enabled = true
@@ -161,12 +214,72 @@ enabled = true
 		cfg.Providers.Nikkei225JP.UserAgent != "統合テスト/1.0" {
 		t.Errorf("225225.jp HTTP設定 = %+v, 分割ファイルの統合結果と一致しません", cfg.Providers.Nikkei225JP)
 	}
+	jQuants := cfg.Providers.JQuants
+	if !jQuants.Enabled || jQuants.BaseURL != "https://jquants.example.test" ||
+		jQuants.APIKey != "integration-test-key" || jQuants.Plan != "premium" ||
+		jQuants.Timeout.Duration != 45*time.Second || jQuants.UserAgent != "J-Quants統合テスト/1.0" ||
+		jQuants.MaxResponseBytes != 32*1024*1024 || len(jQuants.Addons) != 2 ||
+		jQuants.Addons[0] != "minute" || jQuants.Addons[1] != "tdnet" {
+		t.Error("J-Quants設定が分割ファイルの統合結果と一致しません")
+	}
 	if !cfg.Providers.YFinance.Enabled || !cfg.Providers.InvestingPy.Enabled {
 		t.Errorf(
 			"provider有効状態 = (yfinance=%t, investingpy=%t), 両方trueを期待",
 			cfg.Providers.YFinance.Enabled,
 			cfg.Providers.InvestingPy.Enabled,
 		)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestLoadDirAppliesLaterJQuantsLocalOverride は、後順位のローカル設定がJ-Quants既定値を上書きすることを検証します。
+
+機能:
+  - 追跡対象のconf/default.tomlだけではJ-Quantsが無効であることを確認する
+  - 偽APIキーを持つzz-jquants.local.tomlを追加するとenabledとAPIキーが後勝ちになることを確認する
+  - 実運用のローカル秘密設定を読み取らず、一時ディレクトリだけで並び順を再現する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestLoadDirAppliesLaterJQuantsLocalOverride(t *testing.T) {
+	defaultPath := filepath.Join("..", "..", "conf", "default.toml")
+	defaultContent, err := os.ReadFile(defaultPath)
+	if err != nil {
+		t.Fatalf("追跡対象のdefault.tomlを読み込めません: %v", err)
+	}
+	dir := t.TempDir()
+	writeTestFile(t, dir, "default.toml", string(defaultContent))
+
+	defaultConfig, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("default.tomlだけのLoadDir() error = %v", err)
+	}
+	if defaultConfig.Providers.JQuants.Enabled {
+		t.Fatal("追跡対象のdefault.tomlでJ-Quantsが有効です")
+	}
+
+	writeTestFile(t, dir, "zz-jquants.local.toml", `
+[providers.jquants]
+enabled = true
+api_key = "ordering-test-key"
+plan = "standard"
+addons = []
+`)
+	overriddenConfig, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("ローカル上書き後のLoadDir() error = %v", err)
+	}
+	if !overriddenConfig.Providers.JQuants.Enabled {
+		t.Error("後順位のzz-jquants.local.tomlでJ-Quantsが有効になりません")
+	}
+	if overriddenConfig.Providers.JQuants.APIKey != "ordering-test-key" {
+		t.Error("J-Quants APIキーが後順位のローカル設定値で上書きされていません")
 	}
 }
 
@@ -201,6 +314,11 @@ func TestLoadDirRejectsRemovedAndUnknownKeys(t *testing.T) {
 			name:     "providers.python",
 			content:  "[providers.python]\nyfinance_enabled = true\n",
 			wantPath: "providers.python",
+		},
+		{
+			name:     "J-Quants provider未知項目",
+			content:  "[providers.jquants]\nunknown_value = true\n",
+			wantPath: "providers.jquants.unknown_value",
 		},
 		{
 			name:     "provider未知項目",
@@ -395,6 +513,186 @@ func TestValidateRejectsProviderBaseURLPath(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "providers.nikkei225jp.base_url") {
 		t.Fatalf("Validate() error = %v, base_urlパスの拒否を期待", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateAcceptsJQuantsValues は、有効なJ-Quants設定を受け付けることを検証します。
+
+機能:
+  - provider無効時は空のAPIキーを許可する
+  - provider有効時は有効なAPIキー、契約プラン、アドオンおよび境界値を許可する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateAcceptsJQuantsValues(t *testing.T) {
+	cfg := Default()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("provider無効時の空APIキーを含むDefault設定のValidate() error = %v", err)
+	}
+
+	cfg.Providers.JQuants.Enabled = true
+	cfg.Providers.JQuants.APIKey = "integration-test-key"
+	cfg.Providers.JQuants.Plan = "premium"
+	cfg.Providers.JQuants.Addons = []string{"minute", "tdnet"}
+	cfg.Providers.JQuants.Timeout = Duration{Duration: minJQuantsTimeout}
+	cfg.Providers.JQuants.UserAgent = "市場収集/1.0"
+	cfg.Providers.JQuants.MaxResponseBytes = minJQuantsResponseBytes
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("有効なJ-Quants設定のValidate() error = %v", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsInvalidJQuantsValues は、J-Quants固有設定の不正値を拒否することを検証します。
+
+機能:
+  - URL、契約プラン、アドオン、HTTP期限、User-Agent、応答サイズを一括検証する
+  - providerが無効でもAPIキーの必須性以外の設定を検証する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsInvalidJQuantsValues(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.JQuants.BaseURL = "https://api.jquants.com/v2"
+	cfg.Providers.JQuants.Plan = "enterprise"
+	cfg.Providers.JQuants.Addons = []string{"minute", "minute", "unknown"}
+	cfg.Providers.JQuants.Timeout = Duration{Duration: maxJQuantsTimeout + time.Second}
+	cfg.Providers.JQuants.UserAgent = "client\x7f"
+	cfg.Providers.JQuants.MaxResponseBytes = maxJQuantsResponseBytes + 1
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, J-Quants検証エラーを期待")
+	}
+	for _, expected := range []string{
+		"providers.jquants.base_url",
+		"providers.jquants.plan",
+		"providers.jquants.addons に未知の値",
+		"providers.jquants.addons に重複した値",
+		"providers.jquants.timeout",
+		"providers.jquants.user_agent",
+		"providers.jquants.max_response_bytes",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Validate() error = %q, %qを含むことを期待", err, expected)
+		}
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsJQuantsAddonOnFreePlan は、FreeプランとAdd-onの不正な組み合わせを拒否します。
+
+機能:
+  - collector生成前の設定検証でFreeプランへのAdd-on指定を検出する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsJQuantsAddonOnFreePlan(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.JQuants.Plan = "free"
+	cfg.Providers.JQuants.Addons = []string{"minute"}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "freeプランでは利用できません") {
+		t.Fatalf("Validate() error = %v, FreeプランのAdd-on拒否を期待", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsInvalidJQuantsAPIKeyWithoutDisclosure は、不正なAPIキーを値の漏えいなしで拒否することを検証します。
+
+機能:
+  - provider有効時の空APIキーを拒否する
+  - 非空APIキーの前後空白とHTTP制御文字をproviderの有効状態にかかわらず拒否する
+  - 検証エラーへAPIキーの実値を含めないことを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsInvalidJQuantsAPIKeyWithoutDisclosure(t *testing.T) {
+	testCases := []struct {
+		name    string
+		enabled bool
+		apiKey  string
+	}{
+		{name: "有効時に空", enabled: true, apiKey: ""},
+		{name: "前後空白", enabled: false, apiKey: " disclosure-test-key "},
+		{name: "水平タブ", enabled: false, apiKey: "disclosure-test-key\tvalue"},
+		{name: "改行", enabled: false, apiKey: "disclosure-test-key\nvalue"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Providers.JQuants.Enabled = testCase.enabled
+			cfg.Providers.JQuants.APIKey = testCase.apiKey
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "providers.jquants.api_key") {
+				t.Fatalf("Validate() error = %v, APIキー検証エラーを期待", err)
+			}
+			if strings.Contains(err.Error(), "disclosure-test-key") {
+				t.Errorf("Validate() errorにAPIキーの実値が含まれています: %v", err)
+			}
+		})
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsJQuantsResponseSizeOutOfRange は、J-Quants応答本文上限の範囲外値を拒否することを検証します。
+
+機能:
+  - 1MiB未満と64MiB超の応答本文上限を拒否する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsJQuantsResponseSizeOutOfRange(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value int64
+	}{
+		{name: "下限未満", value: minJQuantsResponseBytes - 1},
+		{name: "上限超過", value: maxJQuantsResponseBytes + 1},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Providers.JQuants.MaxResponseBytes = testCase.value
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "providers.jquants.max_response_bytes") {
+				t.Fatalf("Validate() error = %v, 応答本文上限の検証エラーを期待", err)
+			}
+		})
 	}
 }
 

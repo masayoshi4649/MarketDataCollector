@@ -92,7 +92,7 @@ Origin制限はない。CORSの `*` はブラウザによる任意Originから�
 }
 ```
 
-`data` はdataset固有の値である。provider共通の識別子、完了時刻、実行ライブラリ等は外側へ保持する。225225.jpの取得URLと取得時刻はdataset固有データ内の `metadata` または `sources` に含む。
+`data` はdataset固有の値である。provider共通の識別子、完了時刻、実行ライブラリ等は外側へ保持する。225225.jpの取得URLと取得時刻はdataset固有データ内の `metadata` または `sources` に含む。J-Quantsは上流レスポンス全体を `data` に保持するため、上流の `data` 配列、`pagination_key`、`cursor`、署名付きURLはこの内側に現れる。
 
 ## エラー
 
@@ -114,7 +114,7 @@ Origin制限はない。CORSの `*` はブラウザによる任意Originから�
 | 415 | `INVALID_CONTENT_TYPE` | Content-TypeがJSONではない |
 | 415 | `UNSUPPORTED_CONTENT_ENCODING` | 圧縮要求を送信 |
 | 502 | `UPSTREAM_ERROR` | 外部データ取得または形式検証に失敗 |
-| 503 | `PROVIDER_UNAVAILABLE` | Python依存、出力、provider実行環境が利用不能 |
+| 503 | `PROVIDER_UNAVAILABLE` | Python依存・出力を含むprovider実行環境、J-QuantsのAPIキー・契約・レート制限等により利用不能 |
 | 504 | `TIMEOUT` | 収集期限を超過 |
 | 500 | `INTERNAL` | 未分類の内部失敗 |
 

@@ -19,6 +19,7 @@ import (
 	"github.com/masayoshi4649/MarketDataCollector/internal/httpserver"
 	"github.com/masayoshi4649/MarketDataCollector/internal/mcpserver"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider"
+	"github.com/masayoshi4649/MarketDataCollector/internal/provider/jquants"
 	nikkei225provider "github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225jp"
 	pythonprovider "github.com/masayoshi4649/MarketDataCollector/internal/provider/python"
@@ -162,10 +163,10 @@ func listenAddress(port int) string {
 //   - cfg config.Config: 検証済みの全アプリケーション設定。
 //
 // 返り値:
-//   - []provider.Collector: 有効な225225.jp、yfinance、investingpyの設定順一覧。
-//   - error: HTTPクライアント、provider、Python実行環境の生成エラー。
+//   - []provider.Collector: 有効な225225.jp、J-Quants、yfinance、investingpyの設定順一覧。
+//   - error: HTTPクライアント、provider、J-Quantsクライアント、Python実行環境の生成エラー。
 func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
-	collectors := make([]provider.Collector, 0, 3)
+	collectors := make([]provider.Collector, 0, 4)
 	if cfg.Providers.Nikkei225JP.Enabled {
 		httpClient := &http.Client{Timeout: cfg.Providers.Nikkei225JP.Timeout.Duration}
 		nikkeiClient, err := nikkei225jp.NewClient(nikkei225jp.Config{
@@ -183,6 +184,30 @@ func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
 			return nil, fmt.Errorf("225225.jp providerを生成できません: %w", err)
 		}
 		collectors = append(collectors, nikkeiCollector)
+	}
+
+	// ----------------------------------------
+
+	if cfg.Providers.JQuants.Enabled {
+		httpClient := &http.Client{Timeout: cfg.Providers.JQuants.Timeout.Duration}
+		jQuantsClient, err := jquants.NewClient(jquants.ClientConfig{
+			BaseURL:          cfg.Providers.JQuants.BaseURL,
+			APIKey:           cfg.Providers.JQuants.APIKey,
+			HTTPClient:       httpClient,
+			UserAgent:        cfg.Providers.JQuants.UserAgent,
+			MaxResponseBytes: cfg.Providers.JQuants.MaxResponseBytes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("J-Quants APIクライアントを生成できません: %w", err)
+		}
+		jQuantsCollector, err := jquants.NewCollector(jQuantsClient, jquants.Options{
+			Plan:   cfg.Providers.JQuants.Plan,
+			Addons: cfg.Providers.JQuants.Addons,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("J-Quants providerを生成できません: %w", err)
+		}
+		collectors = append(collectors, jQuantsCollector)
 	}
 
 	// ----------------------------------------

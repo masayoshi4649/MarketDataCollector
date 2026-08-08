@@ -9,54 +9,97 @@
 - 後のファイルで指定した項目だけが前の値を上書きする。
 - TOMLファイルが0件、解析失敗、未知項目、統合後の不正値は起動エラーにする。
 
-リポジトリには既定の `conf/default.toml` がある。現在はPython providerが有効なため、Python環境を構築するか、両Python providerを `false` へ上書きした上で、ルートから `go run .` で起動する。端末固有設定は `conf/90-local.local.toml` などへ保存する。この拡張名も `.toml` なので読み込まれ、Gitでは無視される。
+リポジトリには既定の `conf/default.toml` がある。現在はPython providerが有効なため、Python環境を構築するか、両Python providerを `false` へ上書きした上で、ルートから `go run .` で起動する。端末固有設定は、`default.toml` より後へ並ぶ `conf/zz-local.local.toml` などへ保存する。この拡張名も `.toml` なので読み込まれ、Gitでは無視される。J-Quantsの実APIキーは必ず `conf/*.local.toml` だけに保存し、追跡対象の `default.toml`、サンプル、文書には保存しない。
 
 ## `[SYSTEM]`
 
-| 項目 | 既定値 | 制約・内容 |
-| --- | --- | --- |
-| `Port` | `8080` | 1～65535 |
-| `RequestTimeout` | `60s` | 1秒～10分。REST/MCP共通 |
-| `MaxRequestBytes` | `1048576` | 1～16 MiB |
+| 項目              | 既定値    | 制約・内容              |
+| ----------------- | --------- | ----------------------- |
+| `Port`            | `8080`    | 1～65535                |
+| `RequestTimeout`  | `60s`     | 1秒～10分。REST/MCP共通 |
+| `MaxRequestBytes` | `1048576` | 1～16 MiB               |
 
 待受ホストを選ぶ設定はない。サーバーは常に指定Portの全ネットワークインターフェースで待ち受ける。たとえば既定値は `:8080` であり、`127.0.0.1:8080` だけに限定されない。
 
 ## `[providers.nikkei225jp]`
 
-| 項目 | 既定値 | 内容 |
-| --- | --- | --- |
-| `enabled` | `true` | 収集を許可する |
-| `base_url` | `https://225225.jp` | HTTP/HTTPSの同一ホスト固定パス用オリジン。パス、クエリ、フラグメントは指定不可 |
-| `timeout` | `10s` | 1秒～5分。225225.jpへの1 HTTP要求期限 |
-| `user_agent` | `MarketDataCollector/0.1` | 225225.jpへ送る、利用元を識別可能にするUser-Agent文字列。空文字とHTTP headerで禁止された制御文字は不可 |
-| `max_response_bytes` | `4194304` | 1～16 MiB。通常レスポンス本文上限。既定は4 MiB |
-| `max_chart_response_bytes` | `33554432` | 1～64 MiB。チャート本文上限。既定は32 MiB |
+| 項目                       | 既定値                    | 内容                                                                                                   |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `enabled`                  | `true`                    | 収集を許可する                                                                                         |
+| `base_url`                 | `https://225225.jp`       | HTTP/HTTPSの同一ホスト固定パス用オリジン。パス、クエリ、フラグメントは指定不可                         |
+| `timeout`                  | `10s`                     | 1秒～5分。225225.jpへの1 HTTP要求期限                                                                  |
+| `user_agent`               | `MarketDataCollector/0.1` | 225225.jpへ送る、利用元を識別可能にするUser-Agent文字列。空文字とHTTP headerで禁止された制御文字は不可 |
+| `max_response_bytes`       | `4194304`                 | 1～16 MiB。通常レスポンス本文上限。既定は4 MiB                                                         |
+| `max_chart_response_bytes` | `33554432`                | 1～64 MiB。チャート本文上限。既定は32 MiB                                                              |
 
 225225.jpの上流レスポンスはローカルに保持しない。`catalog` を除く収集要求ごとに上流へ接続し、自動再試行は行わない。
 
+## `[providers.jquants]`
+
+J-Quants API v2へ直接接続するGoネイティブproviderの設定である。
+
+| 項目                 | 既定値                    | 制約・内容                                                                                                        |
+| -------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `enabled`            | `false`                   | J-Quants収集を許可する。実APIキーを追跡対象へ保存しないよう既定は無効                                             |
+| `base_url`           | `https://api.jquants.com` | HTTP/HTTPSのAPIオリジン。userinfo、パス、クエリ、フラグメントは指定不可。実APIキー利用時は公式HTTPSから変更しない |
+| `api_key`            | `""`                      | V2の `x-api-key` ヘッダーへ設定する秘密値。有効化時は必須。前後空白とHTTP制御文字は不可                           |
+| `plan`               | `standard`                | `free`、`light`、`standard`、`premium` のいずれか。契約中のプランと合わせる                                       |
+| `addons`             | `[]`                      | 契約済みアドオンの配列。`minute` と `tdnet` だけを許可し、未知値と重複は不可。Freeプランでは指定不可              |
+| `timeout`            | `30s`                     | 1秒～5分。J-Quantsへの1 HTTP要求の期限                                                                            |
+| `user_agent`         | `MarketDataCollector/0.1` | J-Quantsへ送るUser-Agent。空文字とHTTP headerで禁止された制御文字は不可                                           |
+| `max_response_bytes` | `16777216`                | 1～64 MiB。未圧縮本文、Gzipヘッダーを含む圧縮本文、展開後本文の上限。既定は16 MiB                                 |
+
+次の例は `conf/zz-jquants.local.toml` など、`default.toml` より後へ並ぶGit管理外の `conf/*.local.toml` だけに保存する。設定はファイル名順で読み込まれるため、既定値を上書きするローカルファイルを `default.toml` より前へ並べない。`YOUR_JQUANTS_API_KEY` は説明用のプレースホルダーであり、実際のキーを文書やGit差分へ貼り付けない。
+
+```toml
+[providers.jquants]
+enabled = true
+base_url = "https://api.jquants.com"
+api_key = "YOUR_JQUANTS_API_KEY"
+plan = "standard"
+addons = []
+timeout = "30s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+`plan` と `addons` は `datalist` に掲載するdatasetを制限する。Standardプラン、アドオンなしでは17データAPIとBulk API 2件の合計19 datasetを掲載し、cursor入力は公開しない。cursorはPremiumの `fins_summary`・`fins_details` とTDnetアドオンの `td_list` でだけ利用できる。Freeプランにアドオンを設定すると起動時に拒否する。詳細な30件の対応表は [J-Quants API v2 対応状況](jquants.md) に集約する。
+
+同梱の `default.toml` では `jquants` が無効なため、現在の `datalist` は3 providerである。Git管理外のローカル設定で `jquants` を有効化すると、4 providerになる。
+
+`enabled=true` の場合だけ `api_key` を必須とする。providerはAPIキーを応答とmetadataに出力しない。不正なAPIキー設定の検証エラーも、値自体を含めず設定パスだけを示す。通信エラーはAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持するため、queryへ独自の秘密値を入れない。
+
+`http` は隔離したローカルテスト先のために許可している。実APIキーをHTTP接続で使うと `x-api-key` が暗号化されず送信されるため、実運用では `base_url = "https://api.jquants.com"` を保持する。
+
+HTTPリダイレクトは通常どおり追跡する。同一originでは `x-api-key` を維持し、異なるoriginでは同ヘッダーだけを除去する。`max_response_bytes` は未圧縮本文だけでなく、Gzip圧縮本文と展開後本文の双方を制限する。
+
+全J-Quants要求はプロセス内で共有する単一FIFOキューへ受付順に入り、基本・財務・株価分足／ティック・TDnetの独立quotaにより [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)の50%で開始する。実効上限は基本枠がFree 2.5、Light 30、Standard 60、Premium 250要求/分、追加枠が財務30、株価分足・ティック30、TDnet 50要求/分である。キューとquotaはプロセス内だけで共有し、429を自動再試行しない。
+
+[公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)は総ページ数、総件数、現在ページを返さない。本providerは1要求1ページとし、同じ検索条件へ最新 `pagination_key` を指定して継続し、キーが返らなくなった応答で完了と判断する。cursorは [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md) に従う日本時間当日の差分用の不透明値で、対象3 APIの最終ページにだけ返る。値を解釈・加工せず受け渡すが、pagination keyとcursorの自動追跡や永続化は行わない。
+
 ## `[providers.yfinance]`
 
-| 項目 | 既定値 | 内容 |
-| --- | --- | --- |
+| 項目      | 既定値 | 内容                                                                 |
+| --------- | ------ | -------------------------------------------------------------------- |
 | `enabled` | `true` | 同梱 `conf/default.toml` の実効値。yfinance providerの収集を許可する |
 
 ## `[providers.investingpy]`
 
-| 項目 | 既定値 | 内容 |
-| --- | --- | --- |
+| 項目      | 既定値 | 内容                                                                           |
+| --------- | ------ | ------------------------------------------------------------------------------ |
 | `enabled` | `true` | 同梱 `conf/default.toml` の実効値。investingpy識別子のproviderの収集を許可する |
 
 Go内部の基底値は両providerとも `false` だが、同梱の `conf/default.toml` は現在両方を `true` で上書きする。各providerは独立して設定でき、`enabled=true` のproviderだけが `datalist` に掲載される。`false` のproviderを `collect` に指定しても、存在しないproviderと同じ `NOT_FOUND` になる。
 
 ## `[python]`
 
-| 項目 | 既定値 | 内容 |
-| --- | --- | --- |
-| `executable` | `python` | Python実行ファイル名またはパス。空文字とNUL文字は不可 |
-| `script` | `python/collector.py` | 標準入出力adapter。空文字とNUL文字は不可 |
-| `timeout` | `60s` | 1秒～10分。子プロセス1件の期限 |
-| `max_response_bytes` | `16777216` | 1～64 MiB。stdoutの最大保持サイズ |
-| `max_concurrent_processes` | `2` | 1～8。2つのPython providerで共有する子プロセス専用枠 |
+| 項目                       | 既定値                | 内容                                                  |
+| -------------------------- | --------------------- | ----------------------------------------------------- |
+| `executable`               | `python`              | Python実行ファイル名またはパス。空文字とNUL文字は不可 |
+| `script`                   | `python/collector.py` | 標準入出力adapter。空文字とNUL文字は不可              |
+| `timeout`                  | `60s`                 | 1秒～10分。子プロセス1件の期限                        |
+| `max_response_bytes`       | `16777216`            | 1～64 MiB。stdoutの最大保持サイズ                     |
+| `max_concurrent_processes` | `2`                   | 1～8。2つのPython providerで共有する子プロセス専用枠  |
 
 `[python]` はyfinanceとinvestingpyの共有実行設定である。いずれかのproviderが有効な場合は起動時に実行ファイルとscriptの存在を確認する。各Pythonライブラリのimportは要求時に行い、不足時はGoサーバーを落とさず `PROVIDER_UNAVAILABLE` を返す。
 
@@ -78,6 +121,6 @@ Python要求は `max_concurrent_processes` の専用枠を取得して子プロ�
 
 アプリケーションは常に全インターフェースで待ち受け、Origin制限を行わない。CORSは `Access-Control-Allow-Origin: *` であり、ブラウザを含む任意Originから利用できる。CORSはアクセス制御ではない。
 
-したがって、サーバーへ到達可能な利用者は全員、RESTとMCPから収集処理を実行できる。操作が読取専用でも、外部providerへの通信、上流負荷、利用規約・データ利用条件のリスクは残る。
+したがって、サーバーへ到達可能な利用者は全員、RESTとMCPから収集処理を実行できる。操作が読取専用でも、外部providerへの通信、上流負荷、利用規約・データ利用条件のリスクは残る。J-Quantsを有効にすると、到達可能な第三者も保存済みAPIキーの利用枠を消費し、取得データを閲覧できる。
 
 意図しない利用者から隔離する場合は、OSファイアウォール、コンテナや仮想ネットワーク、TLS・レート制限を提供するリバースプロキシで到達範囲を制御する。あわせてOS側のCPU・メモリ・プロセス制限を適用する。

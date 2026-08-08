@@ -25,6 +25,11 @@ const (
 	defaultNikkei225JPUserAgent                   = "MarketDataCollector/0.1"
 	defaultNikkei225JPMaxResponseBytes      int64 = 4 * 1024 * 1024
 	defaultNikkei225JPMaxChartResponseBytes int64 = 32 * 1024 * 1024
+	defaultJQuantsBaseURL                         = "https://api.jquants.com"
+	defaultJQuantsPlan                            = "standard"
+	defaultJQuantsTimeout                         = 30 * time.Second
+	defaultJQuantsUserAgent                       = "MarketDataCollector/0.1"
+	defaultJQuantsMaxResponseBytes          int64 = 16 * 1024 * 1024
 	defaultPythonExecutable                       = "python"
 	defaultPythonScript                           = "python/collector.py"
 	defaultPythonTimeout                          = 60 * time.Second
@@ -39,6 +44,10 @@ const (
 	maxNikkei225JPTimeout                  = 5 * time.Minute
 	maxNikkei225JPResponseBytes      int64 = 16 * 1024 * 1024
 	maxNikkei225JPChartResponseBytes int64 = 64 * 1024 * 1024
+	minJQuantsTimeout                      = time.Second
+	maxJQuantsTimeout                      = 5 * time.Minute
+	minJQuantsResponseBytes          int64 = 1 * 1024 * 1024
+	maxJQuantsResponseBytes          int64 = 64 * 1024 * 1024
 	minPythonTimeout                       = time.Second
 	maxPythonTimeout                       = 10 * time.Minute
 	maxPythonResponseBytes           int64 = 64 * 1024 * 1024
@@ -67,6 +76,7 @@ type SystemConfig struct {
 // ProvidersConfig は、各情報取得元の設定を保持します。
 type ProvidersConfig struct {
 	Nikkei225JP Nikkei225JPConfig `toml:"nikkei225jp"`
+	JQuants     JQuantsConfig     `toml:"jquants"`
 	YFinance    ProviderConfig    `toml:"yfinance"`
 	InvestingPy ProviderConfig    `toml:"investingpy"`
 }
@@ -86,6 +96,18 @@ type Nikkei225JPConfig struct {
 	MaxChartResponseBytes int64    `toml:"max_chart_response_bytes"`
 }
 
+// JQuantsConfig は、J-Quants APIへの接続、契約プラン、アドオンおよび応答本文の制限を保持します。
+type JQuantsConfig struct {
+	Enabled          bool     `toml:"enabled"`
+	BaseURL          string   `toml:"base_url"`
+	APIKey           string   `toml:"api_key"`
+	Plan             string   `toml:"plan"`
+	Addons           []string `toml:"addons"`
+	Timeout          Duration `toml:"timeout"`
+	UserAgent        string   `toml:"user_agent"`
+	MaxResponseBytes int64    `toml:"max_response_bytes"`
+}
+
 // PythonConfig は、Python provider間で共有する子プロセス実行設定を保持します。
 type PythonConfig struct {
 	Executable             string   `toml:"executable"`
@@ -99,7 +121,8 @@ type PythonConfig struct {
 Default は、アプリケーション設定の既定値を生成します。
 
 機能:
-  - HTTPサーバー、225225.jp通信、Python実行環境の標準の既定値を組み立てる
+  - HTTPサーバー、225225.jp通信、J-Quants API通信、Python実行環境の標準の既定値を組み立てる
+  - APIキーが必要なJ-Quants API連携を既定では無効にする
   - 利用条件の確認が必要なPython連携を既定では無効にする
 
 引数:
@@ -130,6 +153,16 @@ func Default() Config {
 				UserAgent:             defaultNikkei225JPUserAgent,
 				MaxResponseBytes:      defaultNikkei225JPMaxResponseBytes,
 				MaxChartResponseBytes: defaultNikkei225JPMaxChartResponseBytes,
+			},
+			JQuants: JQuantsConfig{
+				Enabled:          false,
+				BaseURL:          defaultJQuantsBaseURL,
+				APIKey:           "",
+				Plan:             defaultJQuantsPlan,
+				Addons:           []string{},
+				Timeout:          Duration{Duration: defaultJQuantsTimeout},
+				UserAgent:        defaultJQuantsUserAgent,
+				MaxResponseBytes: defaultJQuantsMaxResponseBytes,
 			},
 			YFinance:    ProviderConfig{Enabled: false},
 			InvestingPy: ProviderConfig{Enabled: false},
@@ -210,8 +243,8 @@ func LoadDir(dir string) (Config, error) {
 Validate は、アプリケーション設定が実行可能な範囲の値であることを検証します。
 
 機能:
-  - HTTPサーバー、225225.jp通信、Python実行環境の範囲と形式をまとめて検証する
-  - providerの有効状態にかかわらず、設定ファイル全体を起動時に検証する
+  - HTTPサーバー、225225.jp通信、J-Quants API通信、Python実行環境の範囲と形式をまとめて検証する
+  - J-Quants APIキーの必須性を除き、providerの有効状態にかかわらず設定ファイル全体を起動時に検証する
   - 検出した複数の不正値を結合して返す
 
 引数:
@@ -297,6 +330,102 @@ func (c Config) Validate() error {
 				"providers.nikkei225jp.max_chart_response_bytes は 1 以上 %d 以下である必要があります: %d",
 				maxNikkei225JPChartResponseBytes,
 				c.Providers.Nikkei225JP.MaxChartResponseBytes,
+			),
+		)
+	}
+
+	// ----------------------------------------
+
+	if err := validateBaseURL(c.Providers.JQuants.BaseURL); err != nil {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("providers.jquants.base_url が不正です: %w", err),
+		)
+	}
+	jQuantsAPIKey := c.Providers.JQuants.APIKey
+	if c.Providers.JQuants.Enabled && jQuantsAPIKey == "" {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.jquants.api_key はJ-Quants providerが有効な場合に必須です"),
+		)
+	}
+	if jQuantsAPIKey != "" {
+		if strings.TrimSpace(jQuantsAPIKey) != jQuantsAPIKey {
+			validationErrors = append(
+				validationErrors,
+				errors.New("providers.jquants.api_key の前後に空白を含めることはできません"),
+			)
+		}
+		if strings.ContainsRune(jQuantsAPIKey, '\t') || !validHTTPHeaderFieldValue(jQuantsAPIKey) {
+			validationErrors = append(
+				validationErrors,
+				errors.New("providers.jquants.api_key にHTTPヘッダーで利用できない制御文字があります"),
+			)
+		}
+	}
+	switch c.Providers.JQuants.Plan {
+	case "free", "light", "standard", "premium":
+	default:
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.jquants.plan はfree、light、standard、premiumのいずれかである必要があります"),
+		)
+	}
+	seenJQuantsAddons := make(map[string]struct{}, len(c.Providers.JQuants.Addons))
+	for _, addon := range c.Providers.JQuants.Addons {
+		switch addon {
+		case "minute", "tdnet":
+		default:
+			validationErrors = append(
+				validationErrors,
+				fmt.Errorf("providers.jquants.addons に未知の値があります: %q", addon),
+			)
+		}
+		if _, exists := seenJQuantsAddons[addon]; exists {
+			validationErrors = append(
+				validationErrors,
+				fmt.Errorf("providers.jquants.addons に重複した値があります: %q", addon),
+			)
+		}
+		seenJQuantsAddons[addon] = struct{}{}
+	}
+	if c.Providers.JQuants.Plan == "free" && len(c.Providers.JQuants.Addons) > 0 {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.jquants.addons はfreeプランでは利用できません"),
+		)
+	}
+	if c.Providers.JQuants.Timeout.Duration < minJQuantsTimeout ||
+		c.Providers.JQuants.Timeout.Duration > maxJQuantsTimeout {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.jquants.timeout は %s 以上 %s 以下である必要があります",
+				minJQuantsTimeout,
+				maxJQuantsTimeout,
+			),
+		)
+	}
+	if strings.TrimSpace(c.Providers.JQuants.UserAgent) == "" {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.jquants.user_agent は空にできません"),
+		)
+	} else if !validHTTPHeaderFieldValue(c.Providers.JQuants.UserAgent) {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.jquants.user_agent にHTTPヘッダーで利用できない制御文字があります"),
+		)
+	}
+	if c.Providers.JQuants.MaxResponseBytes < minJQuantsResponseBytes ||
+		c.Providers.JQuants.MaxResponseBytes > maxJQuantsResponseBytes {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.jquants.max_response_bytes は %d 以上 %d 以下である必要があります: %d",
+				minJQuantsResponseBytes,
+				maxJQuantsResponseBytes,
+				c.Providers.JQuants.MaxResponseBytes,
 			),
 		)
 	}

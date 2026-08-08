@@ -17,7 +17,7 @@ TestBuildCollectorsRegistersOnlyDefaultEnabledProvider は、初期provider構�
 
 機能:
   - 既定で有効な225225.jpだけを登録する
-  - 既定で無効なPython providerを一覧から除外する
+  - 既定で無効なJ-QuantsおよびPython providerを一覧から除外する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -36,6 +36,47 @@ func TestBuildCollectorsRegistersOnlyDefaultEnabledProvider(t *testing.T) {
 	descriptor := collectors[0].Descriptor()
 	if descriptor.Name != "225225jp" {
 		t.Errorf("provider = %+v, 225225jpを期待", descriptor)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestBuildCollectorsRegistersJQuantsProviderForStandardPlan は、Standard契約のJ-Quants provider登録を検証します。
+
+機能:
+  - J-Quantsだけを有効にして専用HTTPクライアントとcollectorを生成する
+  - provider名とStandard契約で利用可能なデータセット件数を確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestBuildCollectorsRegistersJQuantsProviderForStandardPlan(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.Nikkei225JP.Enabled = false
+	cfg.Providers.JQuants.Enabled = true
+	cfg.Providers.JQuants.APIKey = "test-api-key"
+	cfg.Providers.JQuants.Plan = "standard"
+	cfg.Providers.JQuants.Addons = []string{}
+	cfg.Providers.YFinance.Enabled = false
+	cfg.Providers.InvestingPy.Enabled = false
+
+	collectors, err := buildCollectors(cfg)
+	if err != nil {
+		t.Fatalf("buildCollectors() error = %v", err)
+	}
+	if len(collectors) != 1 {
+		t.Fatalf("provider件数 = %d, 1を期待", len(collectors))
+	}
+	descriptor := collectors[0].Descriptor()
+	if descriptor.Name != "jquants" {
+		t.Errorf("provider = %+v, jquantsを期待", descriptor)
+	}
+	if len(descriptor.Datasets) != 19 {
+		t.Errorf("Standardのデータセット件数 = %d, 19を期待", len(descriptor.Datasets))
 	}
 }
 
@@ -93,6 +134,9 @@ TestBuildCollectorsAllowsAllProvidersDisabled は、全providerを一覧から�
 func TestBuildCollectorsAllowsAllProvidersDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers.Nikkei225JP.Enabled = false
+	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.YFinance.Enabled = false
+	cfg.Providers.InvestingPy.Enabled = false
 
 	collectors, err := buildCollectors(cfg)
 	if err != nil {
