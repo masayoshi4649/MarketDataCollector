@@ -14,7 +14,7 @@ TestDefault は、Defaultが新しい責務分離後の既定値を返すこと�
 機能:
   - SYSTEMにHTTPサーバー共通制限だけが設定されることを確認する
   - Python共通実行設定がトップレベルに存在することを確認する
-  - 225225.jp、J-Quants、Polymarket固有HTTP設定と各providerの有効状態を確認する
+  - 225225.jp、J-Quants、kabus-controller、Polymarket固有HTTP設定と各providerの有効状態を確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -124,6 +124,35 @@ func TestDefault(t *testing.T) {
 
 	// ----------------------------------------
 
+	kabusController := cfg.Providers.KabusController
+	if !kabusController.Enabled || kabusController.BaseURL != "http://10.10.100.1:8080" {
+		t.Errorf(
+			"kabus-controller基本設定 = (%t, %q), 期待値は(true, %q)",
+			kabusController.Enabled,
+			kabusController.BaseURL,
+			"http://10.10.100.1:8080",
+		)
+	}
+	if kabusController.Timeout.Duration != 15*time.Second ||
+		kabusController.UserAgent != "MarketDataCollector/0.1" {
+		t.Errorf(
+			"kabus-controller HTTP設定 = (%s, %q), 期待値は(%s, %q)",
+			kabusController.Timeout,
+			kabusController.UserAgent,
+			15*time.Second,
+			"MarketDataCollector/0.1",
+		)
+	}
+	if kabusController.MaxResponseBytes != 16*1024*1024 {
+		t.Errorf(
+			"kabus-controller応答上限 = %d, 期待値は%d",
+			kabusController.MaxResponseBytes,
+			16*1024*1024,
+		)
+	}
+
+	// ----------------------------------------
+
 	polymarket := cfg.Providers.Polymarket
 	if !polymarket.Enabled ||
 		polymarket.GammaBaseURL != "https://gamma-api.polymarket.com" ||
@@ -162,9 +191,9 @@ func TestDefault(t *testing.T) {
 TestLoadDir は、分割したTOMLテーブルをファイル名順に統合することを検証します。
 
 機能:
-  - SYSTEM、python、5つのproviderテーブルを新構造へ復号する
+  - SYSTEM、python、6つのproviderテーブルを新構造へ復号する
   - 後順位ファイルが指定項目だけを上書きする
-  - J-Quants、Polymarket、yfinance、investingpyを独立して有効化できることを確認する
+  - J-Quants、kabus-controller、Polymarket、yfinance、investingpyを独立して有効化できることを確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -189,6 +218,10 @@ timeout = "3s"
 enabled = true
 plan = "premium"
 timeout = "45s"
+
+[providers.kabus-controller]
+enabled = true
+timeout = "25s"
 
 [providers.polymarket]
 enabled = true
@@ -217,6 +250,12 @@ api_key = "integration-test-key"
 plan = "light"
 addons = ["minute", "tdnet"]
 user_agent = "J-Quants統合テスト/1.0"
+max_response_bytes = 33554432
+
+[providers.kabus-controller]
+enabled = false
+base_url = "http://kabus-controller.example.test:8080"
+user_agent = "kabus-controller統合テスト/1.0"
 max_response_bytes = 33554432
 
 [providers.polymarket]
@@ -260,6 +299,14 @@ enabled = true
 		jQuants.MaxResponseBytes != 32*1024*1024 || len(jQuants.Addons) != 2 ||
 		jQuants.Addons[0] != "minute" || jQuants.Addons[1] != "tdnet" {
 		t.Error("J-Quants設定が分割ファイルの統合結果と一致しません")
+	}
+	kabusController := cfg.Providers.KabusController
+	if !kabusController.Enabled ||
+		kabusController.BaseURL != "http://kabus-controller.example.test:8080" ||
+		kabusController.Timeout.Duration != 25*time.Second ||
+		kabusController.UserAgent != "kabus-controller統合テスト/1.0" ||
+		kabusController.MaxResponseBytes != 32*1024*1024 {
+		t.Error("kabus-controller設定が分割ファイルの統合結果と一致しません")
 	}
 	polymarket := cfg.Providers.Polymarket
 	if !polymarket.Enabled || polymarket.GammaBaseURL != "https://gamma.example.test" ||
@@ -367,6 +414,11 @@ func TestLoadDirRejectsRemovedAndUnknownKeys(t *testing.T) {
 			name:     "J-Quants provider未知項目",
 			content:  "[providers.jquants]\nunknown_value = true\n",
 			wantPath: "providers.jquants.unknown_value",
+		},
+		{
+			name:     "kabus-controller provider未知項目",
+			content:  "[providers.kabus-controller]\nunknown_value = true\n",
+			wantPath: "providers.kabus-controller.unknown_value",
 		},
 		{
 			name:     "Polymarket provider未知項目",
@@ -599,6 +651,108 @@ func TestValidateAcceptsJQuantsValues(t *testing.T) {
 	cfg.Providers.JQuants.MaxResponseBytes = minJQuantsResponseBytes
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("有効なJ-Quants設定のValidate() error = %v", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateAcceptsKabusControllerValues は、有効なkabus-controller設定を受け付けることを検証します。
+
+機能:
+  - LAN内HTTPオリジン、HTTP期限、User-Agent、応答本文上限の境界値を許可する
+  - providerの有効状態にかかわらず同じ接続設定を検証できることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateAcceptsKabusControllerValues(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.KabusController.Enabled = false
+	cfg.Providers.KabusController.BaseURL = "http://127.0.0.1:8080"
+	cfg.Providers.KabusController.Timeout = Duration{Duration: minKabusControllerTimeout}
+	cfg.Providers.KabusController.UserAgent = "市場収集/1.0"
+	cfg.Providers.KabusController.MaxResponseBytes = minKabusControllerResponseBytes
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("有効なkabus-controller設定のValidate() error = %v", err)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsInvalidKabusControllerValues は、kabus-controller固有設定の不正値を拒否することを検証します。
+
+機能:
+  - URL、HTTP期限、User-Agent、応答本文上限を一括検証する
+  - providerが無効でも接続設定全体を検証する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsInvalidKabusControllerValues(t *testing.T) {
+	cfg := Default()
+	cfg.Providers.KabusController.Enabled = false
+	cfg.Providers.KabusController.BaseURL = "http://10.10.100.1:8080/api"
+	cfg.Providers.KabusController.Timeout = Duration{Duration: maxKabusControllerTimeout + time.Second}
+	cfg.Providers.KabusController.UserAgent = "client\x7f"
+	cfg.Providers.KabusController.MaxResponseBytes = maxKabusControllerResponseBytes + 1
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, kabus-controller検証エラーを期待")
+	}
+	for _, expected := range []string{
+		"providers.kabus-controller.base_url",
+		"providers.kabus-controller.timeout",
+		"providers.kabus-controller.user_agent",
+		"providers.kabus-controller.max_response_bytes",
+	} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Errorf("Validate() error = %q, %qを含むことを期待", err, expected)
+		}
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestValidateRejectsKabusControllerResponseSizeOutOfRange は、kabus-controller応答本文上限の範囲外値を拒否することを検証します。
+
+機能:
+  - 1MiB未満と64MiB超の応答本文上限を拒否する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestValidateRejectsKabusControllerResponseSizeOutOfRange(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value int64
+	}{
+		{name: "下限未満", value: minKabusControllerResponseBytes - 1},
+		{name: "上限超過", value: maxKabusControllerResponseBytes + 1},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Providers.KabusController.MaxResponseBytes = testCase.value
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), "providers.kabus-controller.max_response_bytes") {
+				t.Fatalf("Validate() error = %v, 応答本文上限の検証エラーを期待", err)
+			}
+		})
 	}
 }
 

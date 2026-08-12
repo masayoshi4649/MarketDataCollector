@@ -10,7 +10,8 @@ MarketDataCollectorは、市場情報を要求時に取得し、REST APIと標�
 REST /api/datalist ─┐
 REST /api/collect  ─┼─> internal/service ─> provider registry ─┬─> 225225.jp HTTP
 MCP datalist       ─┤                                          ├─> J-Quants API HTTP
-MCP collect        ─┘                                          ├─> Polymarket Gamma/CLOB/Data HTTP
+MCP collect        ─┘                                          ├─> KabusController HTTP
+                                                               ├─> Polymarket Gamma/CLOB/Data HTTP
                                                                └─> Python adapter
                                                                     ├─> yfinance
                                                                     └─> investpy
@@ -22,6 +23,7 @@ MCP collect        ─┘                                          ├─> Polym
 - `internal/provider/nikkei225jp`: 225225.jpの同一ホストHTTP、本文上限、厳格パーサー
 - `internal/provider/nikkei225`: 225225.jpの13データセットを共通契約へ変換し、ローカル絞り込みを適用
 - `internal/provider/jquants`: J-Quants API v2の固定endpoint、プラン・アドオン別catalog、APIキー送信、Gzip展開、本文上限を管理するGoネイティブprovider
+- `internal/provider/kabuscontroller`: KabusControllerの固定6 GET、入力検証、JSON数値精度、本文上限を管理するGoネイティブprovider
 - `internal/provider/polymarket`: Polymarketの公開Gamma/CLOB/Data APIの固定GET、入力検証、JSON正規化、本文上限、単一FIFOとquotaを管理するGoネイティブprovider
 - `internal/provider/python`: 子プロセスの期限、標準出力上限、厳密JSONを管理
 - `python/collector.py`: yfinanceとinvestpyの許可済み関数だけを呼び、Python固有値をJSONへ正規化
@@ -45,6 +47,7 @@ MCPはRESTのようにtoolごとのURIを持たず、1つのStreamable HTTP endp
 - `[SYSTEM]` はPortとREST/MCP共通の要求期限・本文上限だけを持つ。待受ホストは持たず、全インターフェースで待ち受ける。
 - `[providers.nikkei225jp]` は有効状態に加え、225225.jpへのHTTP接続、User-Agent、本文上限を持つ。
 - `[providers.jquants]` は有効状態、APIオリジン、秘密APIキー、契約プラン、アドオン、HTTP期限、User-Agent、未圧縮・Gzip圧縮・展開後本文の上限を持つ。
+- `[providers.kabus-controller]` は有効状態、KabusControllerのAPIオリジン、HTTP期限、User-Agent、未圧縮・Gzip圧縮・展開後本文の上限を持つ。認証情報は持たない。
 - `[providers.polymarket]` は有効状態、Gamma/CLOB/Dataの3 APIオリジン、HTTP期限、User-Agent、本文上限を持つ。認証情報は持たない。
 - `[providers.yfinance]` と `[providers.investingpy]` は、それぞれの有効状態を独立して持つ。
 - トップレベル `[python]` は2つのPython providerが共有する実行ファイル、script、期限、出力上限、プロセス枠を持つ。
@@ -57,7 +60,7 @@ MCPはRESTのようにtoolごとのURIを持たず、1つのStreamable HTTP endp
 2. RESTまたはMCP adapterが要求を `domain.CollectRequest` へ変換する。
 3. serviceがproviderとdatasetをdatalistの固定仕様と照合する。
 4. providerがdataset固有入力を未知項目も含めて検証する。
-5. providerが外部情報を収集し、標準JSONで表現できる値へ正規化する。Polymarketは `UseNumber` で数値表現を保持し、Python providerは取得元metadataも付ける。
+5. providerが外部情報を収集し、標準JSONで表現できる値へ正規化する。kabus-controllerとPolymarketは `UseNumber` で数値表現を保持し、Python providerは取得元metadataも付ける。
 6. serviceがversion、provider、dataset、完了UTC時刻を付ける。
 7. RESTとMCPが同じ `domain.CollectResponse` を返す。
 
@@ -87,6 +90,19 @@ J-QuantsはPython adapterを経由せず、GoのHTTPクライアントからJ-Qu
 - 429や上流障害を自動再試行しない。FIFOキューとquotaはプロセス単位のため、同じAPIキーを複数プロセスで使う場合は呼び出し側で合算し、応答分類に応じて再実行を判断する。
 - BulkとTDnetのダウンロード系応答は署名付きURLだけを返し、ファイル本体の取得、展開、保存は行わない。
 - APIキーは `x-api-key` ヘッダーのみに設定し、応答とmetadataへ含めない。通信エラーはAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持する。非2xxの上流本文は応答やmetadataへ保持せず、固定のメッセージへ置き換える。
+
+## KabusControllerの取得境界
+
+kabus-controllerはPython adapterを経由せず、GoのHTTPクライアントから既定オリジン `http://10.10.100.1:8080` へ直接接続する。認証情報を扱わず、先物・オプション登録一覧、全体・種類別・指定銘柄の板情報に対応する固定6 GETだけをregistryへ登録する。詳細は [kabus-controller対応状況](kabus-controller.md) に集約する。
+
+- `enabled=true` でも起動時と `datalist` では接続せず、`collect` 時だけ上流へ接続する。上流応答を保存しない。
+- 1回の `collect` につき上流GETを1回だけ実行する。任意URL、複数応答の合成、定期収集、自動再試行は行わない。
+- HTTPリダイレクトを追跡せず、固定6 GET以外への後続要求を防ぐ。
+- `symbol_market_data` だけ `symbol` を必須とし、他の5 datasetは固有入力を持たない。
+- `Accept: application/json` と `Accept-Encoding: gzip` を送り、JSONまたは `+json` のContent-Typeだけを成功応答として受け付ける。
+- 上流JSON全体をキー変換せず `data` へ格納し、`json.Decoder.UseNumber` で数値精度を保持する。
+- `max_response_bytes` を未圧縮本文、Gzip圧縮本文、Gzip展開後本文へ適用する。既定は16 MiB、設定範囲は1～64 MiBである。
+- 登録変更、発注、取消などの更新操作は呼び出さない。
 
 ## Polymarketの取得境界
 
@@ -133,7 +149,7 @@ MCPの `datalist` は固定階層、`collect` は共通外枠のoutput schemaを
 
 内部原因、上流本文、実行パスは公開応答へ含めず、サーバーログだけへ記録する。RESTは分類をHTTP状態へ変換し、MCPはtool errorとして返す。
 
-J-Quantsの場合は上流HTTP 400、401、403、429、5xxを前述の固定分類へ変換する。署名付きURLの取得とファイル本体の取得は別操作であり、本サーバーは後者の失敗を分類しない。Polymarketの場合も入力不正、期限、429を含む利用不能、その他の上流HTTP・JSON失敗を共通分類へ変換し、429を自動再試行しない。
+J-Quantsの場合は上流HTTP 400、401、403、429、5xxを前述の固定分類へ変換する。署名付きURLの取得とファイル本体の取得は別操作であり、本サーバーは後者の失敗を分類しない。kabus-controllerは400・422を `INVALID_ARGUMENT`、個別銘柄の404を `NOT_FOUND`、401・403・425・429・503を `PROVIDER_UNAVAILABLE`、408・504を `TIMEOUT`、その他の非2xxを `UPSTREAM_ERROR` に分類する。Polymarketの場合も入力不正、期限、429を含む利用不能、その他の上流HTTP・JSON失敗を共通分類へ変換し、429を自動再試行しない。
 
 ## セキュリティ
 
@@ -149,5 +165,7 @@ CORSはブラウザの読取可否を示す仕組みであり、アクセス制�
 収集操作は読取専用だが、外部providerへの通信を発生させるため、上流負荷と利用規約・データ利用条件のリスクは残る。
 
 J-Quants providerのAPIキーはサーバー内だけで使用するが、全インターフェース待受とCORS `*` により、到達可能な利用者はAPIキー自体を知らなくてもJ-Quants収集を実行できる。これは契約のレートリミット・利用枠の消費と、取得データの第三者配信につながる。J-Quantsを有効化する環境では、外部公開せず、契約上許可された利用者だけへネットワーク到達範囲を制限する。
+
+kabus-controllerの既定オリジンはLAN内の平文HTTPである。KabusControllerのポートをインターネットへ公開せず、MarketDataCollectorからの通信経路と、MarketDataCollectorへ到達できる利用者の両方をファイアウォール等で制限する。
 
 意図しない利用者から隔離する場合は、OSファイアウォール、コンテナや仮想ネットワーク、TLS・レート制限を提供するリバースプロキシで到達範囲を制御する。OS側でもCPU、メモリ、プロセス数、ファイル・ネットワーク権限を制限する。

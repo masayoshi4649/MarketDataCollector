@@ -65,7 +65,7 @@ max_response_bytes = 16777216
 
 `plan` と `addons` は `datalist` に掲載するdatasetを制限する。Standardプラン、アドオンなしでは17データAPIとBulk API 2件の合計19 datasetを掲載し、cursor入力は公開しない。cursorはPremiumの `fins_summary`・`fins_details` とTDnetアドオンの `td_list` でだけ利用できる。Freeプランにアドオンを設定すると起動時に拒否する。詳細な30件の対応表は [J-Quants API v2 対応状況](jquants.md) に集約する。
 
-同梱の `default.toml` では `jquants` が無効なため、現在の `datalist` は `225225jp`、`polymarket`、`yfinance`、`investingpy` の4 providerである。Git管理外のローカル設定で `jquants` を有効化すると、5 providerになる。
+同梱の `default.toml` では `jquants` が無効なため、現在の `datalist` は `225225jp`、`kabus-controller`、`polymarket`、`yfinance`、`investingpy` の5 providerである。Git管理外のローカル設定で `jquants` を有効化すると、6 providerになる。
 
 `enabled=true` の場合だけ `api_key` を必須とする。providerはAPIキーを応答とmetadataに出力しない。不正なAPIキー設定の検証エラーも、値自体を含めず設定パスだけを示す。通信エラーはAPIキーの完全一致部分だけを伏せ、URL、query、接続先などの診断情報と `errors.Is` による原因判定を保持するため、queryへ独自の秘密値を入れない。
 
@@ -76,6 +76,31 @@ HTTPリダイレクトは通常どおり追跡する。同一originでは `x-api
 全J-Quants要求はプロセス内で共有する単一FIFOキューへ受付順に入り、基本・財務・株価分足／ティック・TDnetの独立quotaにより [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)の50%で開始する。実効上限は基本枠がFree 2.5、Light 30、Standard 60、Premium 250要求/分、追加枠が財務30、株価分足・ティック30、TDnet 50要求/分である。キューとquotaはプロセス内だけで共有し、429を自動再試行しない。
 
 [公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)は総ページ数、総件数、現在ページを返さない。本providerは1要求1ページとし、同じ検索条件へ最新 `pagination_key` を指定して継続し、キーが返らなくなった応答で完了と判断する。cursorは [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md) に従う日本時間当日の差分用の不透明値で、対象3 APIの最終ページにだけ返る。値を解釈・加工せず受け渡すが、pagination keyとcursorの自動追跡や永続化は行わない。
+
+## `[providers.kabus-controller]`
+
+kabus-controllerの先物・オプション登録一覧と板情報へ直接接続する、認証不要・読取専用のGoネイティブprovider設定である。Python設定は使用しない。
+
+| 項目                 | 既定値                    | 制約・内容                                                                                                     |
+| -------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `enabled`            | `true`                    | kabus-controller収集を許可する。`true` でも通信は `collect` 時だけであり、起動時と `datalist` では通信しない |
+| `base_url`           | `http://10.10.100.1:8080` | HTTP/HTTPSのAPIオリジン。userinfo、パス、クエリ、フラグメントは指定不可                                        |
+| `timeout`            | `15s`                     | 1秒～5分。kabus-controllerへの1 HTTP要求期限                                                                   |
+| `user_agent`         | `MarketDataCollector/0.1` | kabus-controllerへ送るUser-Agent。空文字とHTTP headerで禁止された制御文字は不可                                |
+| `max_response_bytes` | `16777216`                | 1～64 MiB。未圧縮・Gzip圧縮・展開後のHTTP応答本文上限。既定は16 MiB                                            |
+
+```toml
+[providers.kabus-controller]
+enabled = true
+base_url = "http://10.10.100.1:8080"
+timeout = "15s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+`base_url` は現在のLAN内エンドポイントを既定値とする。上流の6つの固定GET以外へは接続せず、認証情報や取引操作を扱わない。ホスト、ネットワーク構成、ポートが変わった場合は、`default.toml` を直接編集せず、`conf/zz-kabus-controller.local.toml` など後順位のローカル設定でオリジンだけを上書きする。
+
+既定値は平文HTTPである。通信内容を信頼できないネットワークへ流さず、到達範囲をLAN、VPN、ファイアウォール等で制限する。`enabled=true` でも起動確認は行わないため、`10.10.100.1:8080` へ到達できない環境でも起動と `datalist` は成功し、実際の `collect` 時にエラーとなる。
 
 ## `[providers.polymarket]`
 

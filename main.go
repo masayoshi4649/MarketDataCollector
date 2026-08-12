@@ -20,6 +20,7 @@ import (
 	"github.com/masayoshi4649/MarketDataCollector/internal/mcpserver"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/jquants"
+	"github.com/masayoshi4649/MarketDataCollector/internal/provider/kabuscontroller"
 	nikkei225provider "github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/nikkei225jp"
 	"github.com/masayoshi4649/MarketDataCollector/internal/provider/polymarket"
@@ -164,10 +165,10 @@ func listenAddress(port int) string {
 //   - cfg config.Config: 検証済みの全アプリケーション設定。
 //
 // 返り値:
-//   - []provider.Collector: 有効な225225.jp、J-Quants、Polymarket、yfinance、investingpyの設定順一覧。
+//   - []provider.Collector: 有効な225225.jp、J-Quants、kabus-controller、Polymarket、yfinance、investingpyの設定順一覧。
 //   - error: HTTPクライアント、各Go provider、Python実行環境の生成エラー。
 func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
-	collectors := make([]provider.Collector, 0, 5)
+	collectors := make([]provider.Collector, 0, 6)
 	if cfg.Providers.Nikkei225JP.Enabled {
 		httpClient := &http.Client{Timeout: cfg.Providers.Nikkei225JP.Timeout.Duration}
 		nikkeiClient, err := nikkei225jp.NewClient(nikkei225jp.Config{
@@ -209,6 +210,26 @@ func buildCollectors(cfg config.Config) ([]provider.Collector, error) {
 			return nil, fmt.Errorf("J-Quants providerを生成できません: %w", err)
 		}
 		collectors = append(collectors, jQuantsCollector)
+	}
+
+	// ----------------------------------------
+
+	if cfg.Providers.KabusController.Enabled {
+		httpClient := &http.Client{Timeout: cfg.Providers.KabusController.Timeout.Duration}
+		kabusControllerClient, err := kabuscontroller.NewClient(kabuscontroller.ClientConfig{
+			BaseURL:          cfg.Providers.KabusController.BaseURL,
+			HTTPClient:       httpClient,
+			UserAgent:        cfg.Providers.KabusController.UserAgent,
+			MaxResponseBytes: cfg.Providers.KabusController.MaxResponseBytes,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("kabus-controller APIクライアントを生成できません: %w", err)
+		}
+		kabusControllerCollector, err := kabuscontroller.NewCollector(kabusControllerClient)
+		if err != nil {
+			return nil, fmt.Errorf("kabus-controller providerを生成できません: %w", err)
+		}
+		collectors = append(collectors, kabusControllerCollector)
 	}
 
 	// ----------------------------------------

@@ -9,7 +9,7 @@
 - 欠測値は推測で埋めず `null` または配信元の空値として保持する。
 - provider固有の変化へ対応できるよう、共通外枠とdataset固有 `data` を分離する。
 - Python providerのmetadataには、ライブラリ情報に加えて `source_name`、`source_url`、`unofficial_client`、`terms_url` を付与する。
-- providerの有効状態は `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
+- providerの有効状態は `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.kabus-controller]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` の各 `enabled` で独立して設定する。`true` のproviderだけを `datalist` に掲載し、`false` のproviderへの収集要求は `NOT_FOUND` とする。
 
 ## `225225jp`
 
@@ -92,6 +92,23 @@ BulkとTDnetのダウンロード系datasetは、J-Quantsが発行した署名�
 - [契約別APIとデータ格納期間](https://jpx-jquants.com/ja/spec/data-spec.md)
 - [レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md)
 - [レスポンスステータス](https://jpx-jquants.com/ja/spec/response-status.md)
+
+## `kabus-controller`
+
+KabusControllerの既定オリジン `http://10.10.100.1:8080` へ直接接続し、登録中の先物・オプション一覧と板情報を取得するGoネイティブproviderである。APIキー、Python、外部SDKは使わず、固定許可した6つの `GET` に限定する。登録変更、発注、取消などの更新操作は実装しない。
+
+| dataset | 取得内容 | 上流通信 |
+| ------- | -------- | -------- |
+| `future_registrations` | 先物登録一覧 | `GET /api/trade/registrations/future` |
+| `option_registrations` | オプション登録一覧 | `GET /api/trade/registrations/option` |
+| `market_data` | 登録中の先物・オプションすべての板情報 | `GET /api/trade/market-data` |
+| `future_market_data` | 登録中の先物だけの板情報 | `GET /api/trade/market-data/future` |
+| `option_market_data` | 登録中のオプションだけの板情報 | `GET /api/trade/market-data/option` |
+| `symbol_market_data` | 指定銘柄1件の板情報 | `GET /api/trade/market-data/:symbol` |
+
+`symbol_market_data` だけ `symbol` が必須で、先物とオプションのどちらにも使用できる。入力から任意URLや任意pathを選ぶ機能は提供しない。1回の `collect` は1 GETであり、HTTPリダイレクト、複数応答の結合、自動再試行、保存は行わない。`enabled=true` でも起動時と `datalist` では接続せず、収集時だけ上流へ接続する。
+
+既定接続先はLAN内の平文HTTPである。KabusControllerとMarketDataCollectorの両方についてネットワーク到達範囲を制限し、取得データの利用条件を確認する。設定、metadata、応答境界を含む詳細は [kabus-controller対応状況](kabus-controller.md) を参照する。
 
 ## `polymarket`
 
@@ -184,4 +201,3 @@ pandas DataFrame/Series、MultiIndex、NumPy scalar、Timestamp、NaN、NaT、In
 - [investpyプロジェクトのAPI資料](https://investpy.readthedocs.io/api.html)
 - [Investing.comのAPI非提供案内](https://pro.investing-support.com/hc/en-us/articles/4408847632017-Do-You-Offer-API-Access-at-Investing-com)
 - [Investing.com利用規約](https://cdn.investing.com/about-us/terms_and_conditions.pdf)
-

@@ -30,6 +30,10 @@ const (
 	defaultJQuantsTimeout                         = 30 * time.Second
 	defaultJQuantsUserAgent                       = "MarketDataCollector/0.1"
 	defaultJQuantsMaxResponseBytes          int64 = 16 * 1024 * 1024
+	defaultKabusControllerBaseURL                 = "http://10.10.100.1:8080"
+	defaultKabusControllerTimeout                 = 15 * time.Second
+	defaultKabusControllerUserAgent               = "MarketDataCollector/0.1"
+	defaultKabusControllerMaxResponseBytes  int64 = 16 * 1024 * 1024
 	defaultPolymarketGammaBaseURL                 = "https://gamma-api.polymarket.com"
 	defaultPolymarketCLOBBaseURL                  = "https://clob.polymarket.com"
 	defaultPolymarketDataBaseURL                  = "https://data-api.polymarket.com"
@@ -54,6 +58,10 @@ const (
 	maxJQuantsTimeout                      = 5 * time.Minute
 	minJQuantsResponseBytes          int64 = 1 * 1024 * 1024
 	maxJQuantsResponseBytes          int64 = 64 * 1024 * 1024
+	minKabusControllerTimeout              = time.Second
+	maxKabusControllerTimeout              = 5 * time.Minute
+	minKabusControllerResponseBytes  int64 = 1 * 1024 * 1024
+	maxKabusControllerResponseBytes  int64 = 64 * 1024 * 1024
 	minPolymarketTimeout                   = time.Second
 	maxPolymarketTimeout                   = 5 * time.Minute
 	minPolymarketResponseBytes       int64 = 1 * 1024 * 1024
@@ -85,11 +93,12 @@ type SystemConfig struct {
 
 // ProvidersConfig は、各情報取得元の設定を保持します。
 type ProvidersConfig struct {
-	Nikkei225JP Nikkei225JPConfig `toml:"nikkei225jp"`
-	JQuants     JQuantsConfig     `toml:"jquants"`
-	Polymarket  PolymarketConfig  `toml:"polymarket"`
-	YFinance    ProviderConfig    `toml:"yfinance"`
-	InvestingPy ProviderConfig    `toml:"investingpy"`
+	Nikkei225JP     Nikkei225JPConfig     `toml:"nikkei225jp"`
+	JQuants         JQuantsConfig         `toml:"jquants"`
+	KabusController KabusControllerConfig `toml:"kabus-controller"`
+	Polymarket      PolymarketConfig      `toml:"polymarket"`
+	YFinance        ProviderConfig        `toml:"yfinance"`
+	InvestingPy     ProviderConfig        `toml:"investingpy"`
 }
 
 // ProviderConfig は、個別providerの有効状態を保持します。
@@ -119,6 +128,15 @@ type JQuantsConfig struct {
 	MaxResponseBytes int64    `toml:"max_response_bytes"`
 }
 
+// KabusControllerConfig は、kabus-controller APIへの接続と応答本文の制限を保持します。
+type KabusControllerConfig struct {
+	Enabled          bool     `toml:"enabled"`
+	BaseURL          string   `toml:"base_url"`
+	Timeout          Duration `toml:"timeout"`
+	UserAgent        string   `toml:"user_agent"`
+	MaxResponseBytes int64    `toml:"max_response_bytes"`
+}
+
 // PolymarketConfig は、Polymarket公開APIへの接続と応答本文の制限を保持します。
 type PolymarketConfig struct {
 	Enabled          bool     `toml:"enabled"`
@@ -143,7 +161,8 @@ type PythonConfig struct {
 Default は、アプリケーション設定の既定値を生成します。
 
 機能:
-  - HTTPサーバー、225225.jp、J-Quants API、Polymarket公開API、Python実行環境の標準の既定値を組み立てる
+  - HTTPサーバー、225225.jp、J-Quants API、kabus-controller、Polymarket公開API、Python実行環境の標準の既定値を組み立てる
+  - 認証不要のkabus-controller連携を既定で有効にする
   - 認証不要のPolymarket公開API連携を既定で有効にする
   - APIキーが必要なJ-Quants API連携を既定では無効にする
   - 利用条件の確認が必要なPython連携を既定では無効にする
@@ -186,6 +205,13 @@ func Default() Config {
 				Timeout:          Duration{Duration: defaultJQuantsTimeout},
 				UserAgent:        defaultJQuantsUserAgent,
 				MaxResponseBytes: defaultJQuantsMaxResponseBytes,
+			},
+			KabusController: KabusControllerConfig{
+				Enabled:          true,
+				BaseURL:          defaultKabusControllerBaseURL,
+				Timeout:          Duration{Duration: defaultKabusControllerTimeout},
+				UserAgent:        defaultKabusControllerUserAgent,
+				MaxResponseBytes: defaultKabusControllerMaxResponseBytes,
 			},
 			Polymarket: PolymarketConfig{
 				Enabled:          true,
@@ -275,7 +301,7 @@ func LoadDir(dir string) (Config, error) {
 Validate は、アプリケーション設定が実行可能な範囲の値であることを検証します。
 
 機能:
-  - HTTPサーバー、225225.jp、J-Quants API、Polymarket公開API、Python実行環境の範囲と形式をまとめて検証する
+  - HTTPサーバー、225225.jp、J-Quants API、kabus-controller、Polymarket公開API、Python実行環境の範囲と形式をまとめて検証する
   - J-Quants APIキーの必須性を除き、providerの有効状態にかかわらず設定ファイル全体を起動時に検証する
   - 検出した複数の不正値を結合して返す
 
@@ -458,6 +484,49 @@ func (c Config) Validate() error {
 				minJQuantsResponseBytes,
 				maxJQuantsResponseBytes,
 				c.Providers.JQuants.MaxResponseBytes,
+			),
+		)
+	}
+
+	// ----------------------------------------
+
+	if err := validateBaseURL(c.Providers.KabusController.BaseURL); err != nil {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf("providers.kabus-controller.base_url が不正です: %w", err),
+		)
+	}
+	if c.Providers.KabusController.Timeout.Duration < minKabusControllerTimeout ||
+		c.Providers.KabusController.Timeout.Duration > maxKabusControllerTimeout {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.kabus-controller.timeout は %s 以上 %s 以下である必要があります",
+				minKabusControllerTimeout,
+				maxKabusControllerTimeout,
+			),
+		)
+	}
+	if strings.TrimSpace(c.Providers.KabusController.UserAgent) == "" {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.kabus-controller.user_agent は空にできません"),
+		)
+	} else if !validHTTPHeaderFieldValue(c.Providers.KabusController.UserAgent) {
+		validationErrors = append(
+			validationErrors,
+			errors.New("providers.kabus-controller.user_agent にHTTPヘッダーで利用できない制御文字があります"),
+		)
+	}
+	if c.Providers.KabusController.MaxResponseBytes < minKabusControllerResponseBytes ||
+		c.Providers.KabusController.MaxResponseBytes > maxKabusControllerResponseBytes {
+		validationErrors = append(
+			validationErrors,
+			fmt.Errorf(
+				"providers.kabus-controller.max_response_bytes は %d 以上 %d 以下である必要があります: %d",
+				minKabusControllerResponseBytes,
+				maxKabusControllerResponseBytes,
+				c.Providers.KabusController.MaxResponseBytes,
 			),
 		)
 	}

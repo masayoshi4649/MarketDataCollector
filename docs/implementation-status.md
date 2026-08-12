@@ -18,6 +18,8 @@
 - [x] J-Quantsの1要求1ページ継続、当日差分cursor、Gzip圧縮前後の本文上限、HTTP状態、JSON整数精度を安全に扱う
 - [x] 全J-Quants要求共通の単一FIFOとAPI区分別独立quotaにより、受付順を保って公式上限の50%に抑える
 - [x] J-Quantsの同一originリダイレクトではAPIキーを維持し、異なるoriginではAPIキーだけを除去する
+- [x] kabus-controllerの先物・オプション登録一覧と板情報を、認証・Pythonなしの固定6 GETで要求時に取得できる
+- [x] kabus-controllerのraw JSON、UseNumber、Gzip圧縮前後の本文上限、HTTP状態分類を安全に扱う
 - [x] Polymarketの公開Gamma/CLOB/Data APIを認証・Pythonなしで要求時に取得できる
 - [x] 事前検証PJの基礎10 datasetを移植し、公開読取専用27 datasetを追加した合計37 datasetを固定許可リストとして実装する
 - [x] Polymarketの1 collect=1 GET、page/keyset/CLOB cursor/Data offset、UseNumber正規化、設定可能な本文上限を扱う
@@ -30,7 +32,7 @@
 - [x] Python子プロセス数を2つのPython providerで共有する専用枠により制限する
 - [x] Python応答metadataへ取得元名、URL、非公式client表示、規約URLを付ける
 - [x] CPython 3.14 / Windowsで解決した `requirements.lock.txt` を提供する
-- [x] providerを `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` で個別設定する
+- [x] providerを `[providers.nikkei225jp]`、`[providers.jquants]`、`[providers.kabus-controller]`、`[providers.polymarket]`、`[providers.yfinance]`、`[providers.investingpy]` で個別設定する
 - [x] Python共有実行設定をトップレベル `[python]` に分離する
 - [x] 指定Portの全インターフェースで待ち受け、REST/MCPへ共通の要求期限と本文上限を適用する
 - [x] Origin制限なしでCORS `*` を返す公開境界を文書化する
@@ -58,12 +60,14 @@
 16. 全J-Quants要求で共有する単一FIFOキューと、基本・財務・株価分足／ティック・TDnetの独立quotaを設け、受付順を保って公式レート上限の50%で要求開始を均等化する。
 17. HTTPリダイレクトは通常どおり追跡し、同一originでは `x-api-key` を維持し、異なるoriginでは同ヘッダーだけを除去する。
 18. 通信診断はAPIキーの完全一致だけを伏せ、URLやquery等を保持する。`max_response_bytes` はGzip圧縮本文と展開後本文の双方に適用する。
-19. Polymarketは公式の公開3 APIだけをGoから直接呼び、認証情報とPython依存を持たせない。
-20. Polymarketの各datasetは入力から固定GETを1つだけ選び、応答合成やページ自動追跡をしない。上流が提供しない総ページ数、総件数、`has_more` を推測しない。
-21. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
-22. Polymarket JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化し、本文サイズを設定値で制限する。
-23. CLOB `/price` の公式資料が `side` の意味を逆に記載するため、2026年8月8日のOpenAPI/API Referenceと実測を優先し、best bidを `BUY`、best askを `SELL` へ対応させる。
-24. MCPは `datalist` の固定階層と `collect` の共通外枠を、共通domain型から生成したoutput schemaとして公開する。成功値は同じ生JSONをstructured contentとtext contentへ設定し、provider固有の動的値と大整数の精度を維持する。
+19. kabus-controllerはKabusControllerの固定6 GETだけをGoから直接呼び、認証情報、取引操作、Python依存を持たせない。
+20. kabus-controllerは上流JSONをキー変換せず返し、`UseNumber`、MIME検証、Gzip圧縮前後の本文上限、HTTP状態分類を適用する。
+21. Polymarketは公式の公開3 APIだけをGoから直接呼び、認証情報とPython依存を持たせない。
+22. Polymarketの各datasetは入力から固定GETを1つだけ選び、応答合成やページ自動追跡をしない。上流が提供しない総ページ数、総件数、`has_more` を推測しない。
+23. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
+24. Polymarket JSONは `UseNumber` で復号して標準JSONへ再帰的に正規化し、本文サイズを設定値で制限する。
+25. CLOB `/price` の公式資料が `side` の意味を逆に記載するため、2026年8月8日のOpenAPI/API Referenceと実測を優先し、best bidを `BUY`、best askを `SELL` へ対応させる。
+26. MCPは `datalist` の固定階層と `collect` の共通外枠を、共通domain型から生成したoutput schemaとして公開する。成功値は同じ生JSONをstructured contentとtext contentへ設定し、provider固有の動的値と大整数の精度を維持する。
 
 ## J-Quants API v2の実装基準
 
@@ -81,6 +85,20 @@
 30 datasetごとのAPIパス、現在の掲載状態、利用条件、未対応範囲、将来更新時の確認手順は [J-Quants API v2 対応状況](jquants.md) に記載する。公式仕様は自動同期しないため、確認日より後の変更はこの文書の完了表示に含まれない。
 
 ページングの完了条件は [公式ページング仕様](https://jpx-jquants.com/ja/spec/pagination.md)、当日差分のcursor契約は [公式cursor仕様](https://jpx-jquants.com/ja/spec/cursor.md)、実装上限の基準は [公式レートリミット](https://jpx-jquants.com/ja/spec/rate-limits.md) に従う。
+
+## kabus-controllerの実装基準
+
+- 実装済みdataset: 6件
+- 既定オリジン: `http://10.10.100.1:8080`
+- 認証: 不要。API key、Python、外部SDKを使用しない
+- 更新操作: 0件。登録一覧と板情報の固定GETだけを実装
+- 上流要求: 1 collectにつき1 GET。複数endpointを合成しない
+- 入力: `symbol_market_data` の `symbol` だけ必須。他の5 datasetは固有入力なし
+- JSON: 上流キーを変換せず `data` へ格納し、`json.Decoder.UseNumber` で数値精度を保持
+- 本文上限: 既定16 MiB、設定範囲1～64 MiB。未圧縮・Gzip圧縮・展開後本文へ適用
+- 状態分類: 400・422は `INVALID_ARGUMENT`、個別銘柄の404は `NOT_FOUND`、401・403・425・429・503は `PROVIDER_UNAVAILABLE`、408・504は `TIMEOUT`、その他の非2xxは `UPSTREAM_ERROR`
+
+6 datasetの固定パス、metadata、設定、ネットワーク上の注意は [kabus-controller対応状況](kabus-controller.md) に記載する。
 
 ## Polymarket公開APIの実装基準
 
@@ -112,7 +130,7 @@
 5. Python adapterの外部通信なしunittest
 6. ルート実行パッケージのbuild
 
-Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類、およびPolymarketの37 dataset・固定GET・入力分岐・ページング・UseNumber正規化・本文上限・FIFO順序・50%レート・状態分類のテストを含む。
+Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類、kabus-controllerの固定6 GET・symbol入力・UseNumber・MIME・本文上限・状態分類、およびPolymarketの37 dataset・固定GET・入力分岐・ページング・UseNumber正規化・本文上限・FIFO順序・50%レート・状態分類のテストを含む。
 
 Pythonテストは偽yfinance/investpyモジュールを注入し、許可リスト、入力検証、pandas/NumPy相当値、日時、NaN、循環参照、標準入出力を検証する。
 
@@ -121,6 +139,8 @@ Pythonテストは偽yfinance/investpyモジュールを注入し、許可リス
 225225.jpは `LIVE_225225=1` の場合に実サイトテストを実行できる。通常CIでは実行しない。
 
 J-Quantsは通常テストで外部接続せず、明示的な実API疎通だけをローカルで実行する。通常CIでは実行しない。
+
+kabus-controllerも通常テストで外部接続せず、偽HTTPサーバーで固定6 GETと応答境界を検証する。既定の `10.10.100.1:8080` への実疎通は、KabusControllerが稼働するLAN内で明示的に行う。
 
 Polymarketも通常テストで外部接続しない。2026年8月8日の仕様確認では、特にCLOB `/price` の `BUY` / `SELL` を明示的な実API疎通で確認した。継続的なlive testは通常CIで実行しない。
 

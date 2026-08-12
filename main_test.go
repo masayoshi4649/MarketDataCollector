@@ -16,7 +16,7 @@ import (
 TestBuildCollectorsRegistersDefaultEnabledProviders は、初期provider構成を検証します。
 
 機能:
-  - 既定で有効な225225.jpとPolymarketを設定順に登録する
+  - 既定で有効な225225.jp、kabus-controller、Polymarketを設定順に登録する
   - 既定で無効なJ-QuantsおよびPython providerを一覧から除外する
 
 引数:
@@ -30,12 +30,18 @@ func TestBuildCollectorsRegistersDefaultEnabledProviders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildCollectors() error = %v", err)
 	}
-	if len(collectors) != 2 {
-		t.Fatalf("provider件数 = %d, 2を期待", len(collectors))
+	if len(collectors) != 3 {
+		t.Fatalf("provider件数 = %d, 3を期待", len(collectors))
 	}
-	providerNames := []string{collectors[0].Descriptor().Name, collectors[1].Descriptor().Name}
-	if providerNames[0] != "225225jp" || providerNames[1] != "polymarket" {
-		t.Errorf("provider順 = %v, [225225jp polymarket]を期待", providerNames)
+	providerNames := []string{
+		collectors[0].Descriptor().Name,
+		collectors[1].Descriptor().Name,
+		collectors[2].Descriptor().Name,
+	}
+	if providerNames[0] != "225225jp" ||
+		providerNames[1] != "kabus-controller" ||
+		providerNames[2] != "polymarket" {
+		t.Errorf("provider順 = %v, [225225jp kabus-controller polymarket]を期待", providerNames)
 	}
 }
 
@@ -61,6 +67,7 @@ func TestBuildCollectorsRegistersJQuantsProviderForStandardPlan(t *testing.T) {
 	cfg.Providers.JQuants.APIKey = "test-api-key"
 	cfg.Providers.JQuants.Plan = "standard"
 	cfg.Providers.JQuants.Addons = []string{}
+	cfg.Providers.KabusController.Enabled = false
 	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = false
 	cfg.Providers.InvestingPy.Enabled = false
@@ -84,6 +91,82 @@ func TestBuildCollectorsRegistersJQuantsProviderForStandardPlan(t *testing.T) {
 // ----------------------------------------
 
 /*
+TestBuildCollectorsKeepsGoProviderRegistrationOrder は、Go providerの固定登録順を検証します。
+
+機能:
+  - 225225.jp、J-Quants、kabus-controller、Polymarketを同時に有効化する
+  - datalistへ掲載されるprovider順が設定構造や有効状態に左右されないことを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestBuildCollectorsKeepsGoProviderRegistrationOrder(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.JQuants.Enabled = true
+	cfg.Providers.JQuants.APIKey = "test-api-key"
+	cfg.Providers.YFinance.Enabled = false
+	cfg.Providers.InvestingPy.Enabled = false
+
+	collectors, err := buildCollectors(cfg)
+	if err != nil {
+		t.Fatalf("buildCollectors() error = %v", err)
+	}
+	providerNames := make([]string, len(collectors))
+	for index, collector := range collectors {
+		providerNames[index] = collector.Descriptor().Name
+	}
+	want := []string{"225225jp", "jquants", "kabus-controller", "polymarket"}
+	if strings.Join(providerNames, ",") != strings.Join(want, ",") {
+		t.Errorf("provider順 = %v, %vを期待", providerNames, want)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestBuildCollectorsRegistersKabusControllerProvider は、kabus-controller providerの登録を検証します。
+
+機能:
+  - kabus-controllerだけを有効にして専用HTTPクライアントとcollectorを生成する
+  - provider名と公開される6データセットを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestBuildCollectorsRegistersKabusControllerProvider(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.Nikkei225JP.Enabled = false
+	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.KabusController.Enabled = true
+	cfg.Providers.Polymarket.Enabled = false
+	cfg.Providers.YFinance.Enabled = false
+	cfg.Providers.InvestingPy.Enabled = false
+
+	collectors, err := buildCollectors(cfg)
+	if err != nil {
+		t.Fatalf("buildCollectors() error = %v", err)
+	}
+	if len(collectors) != 1 {
+		t.Fatalf("provider件数 = %d, 1を期待", len(collectors))
+	}
+	descriptor := collectors[0].Descriptor()
+	if descriptor.Name != "kabus-controller" {
+		t.Errorf("provider = %+v, kabus-controllerを期待", descriptor)
+	}
+	if len(descriptor.Datasets) != 6 {
+		t.Errorf("kabus-controllerのデータセット件数 = %d, 6を期待", len(descriptor.Datasets))
+	}
+}
+
+// ----------------------------------------
+
+/*
 TestBuildCollectorsRegistersPolymarketProvider は、Polymarket providerの登録を検証します。
 
 機能:
@@ -100,6 +183,7 @@ func TestBuildCollectorsRegistersPolymarketProvider(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers.Nikkei225JP.Enabled = false
 	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.KabusController.Enabled = false
 	cfg.Providers.Polymarket.Enabled = true
 	cfg.Providers.YFinance.Enabled = false
 	cfg.Providers.InvestingPy.Enabled = false
@@ -141,6 +225,7 @@ func TestBuildCollectorsRegistersPythonProvidersIndependently(t *testing.T) {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	cfg := config.Default()
+	cfg.Providers.KabusController.Enabled = false
 	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = true
 	cfg.Python.Executable = executable
@@ -163,7 +248,7 @@ func TestBuildCollectorsRegistersPythonProvidersIndependently(t *testing.T) {
 TestBuildCollectorsAllowsAllProvidersDisabled は、全providerを一覧から外せることを検証します。
 
 機能:
-  - 5つのenabledがすべてfalseの場合に空のprovider一覧を返す
+  - 6つのenabledがすべてfalseの場合に空のprovider一覧を返す
   - 使用しないHTTPクライアントやPython runnerを生成しない
 
 引数:
@@ -176,6 +261,7 @@ func TestBuildCollectorsAllowsAllProvidersDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.Providers.Nikkei225JP.Enabled = false
 	cfg.Providers.JQuants.Enabled = false
+	cfg.Providers.KabusController.Enabled = false
 	cfg.Providers.Polymarket.Enabled = false
 	cfg.Providers.YFinance.Enabled = false
 	cfg.Providers.InvestingPy.Enabled = false

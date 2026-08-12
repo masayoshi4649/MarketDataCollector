@@ -17,6 +17,7 @@ Pythonの要否は、使用するproviderで決まります。
 | ---------------------------------- | ------ | ---------------- |
 | `225225jp` だけ                    | 不要   | 不要             |
 | `jquants`                          | 不要   | 不要             |
+| `kabus-controller`                 | 不要   | 不要             |
 | `polymarket`                       | 不要   | 不要             |
 | `yfinance`                         | 必要   | 必要             |
 | `investingpy`                      | 必要   | 必要             |
@@ -35,7 +36,7 @@ enabled = false
 enabled = false
 ```
 
-`jquants` と `polymarket` はGoネイティブproviderのため、他のproviderと同時に有効化してもPythonの要否に影響しません。
+`jquants`、`kabus-controller`、`polymarket` はGoネイティブproviderのため、他のproviderと同時に有効化してもPythonの要否に影響しません。
 
 ### 2.1 J-Quantsを利用する場合
 
@@ -67,7 +68,26 @@ max_response_bytes = 16777216
 
 通信エラーではAPIキーの完全一致だけを伏せ、URLやqueryなどの診断情報は保持します。queryへ独自の秘密値を入れないでください。
 
-### 2.2 Polymarketを利用する場合
+### 2.2 kabus-controllerを利用する場合
+
+kabus-controller providerは同梱設定で `enabled=true` です。既定ではLAN内の `http://10.10.100.1:8080` へ接続します。APIキー、Python、Node.js、追加パッケージは不要です。`enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ通信します。
+
+KabusControllerのアドレスが異なる場合、または通信期限・本文上限を変更する場合は、`conf/zz-kabus-controller.local.toml` などへ次を記載します。
+
+```toml
+[providers.kabus-controller]
+enabled = true
+base_url = "http://10.10.100.1:8080"
+timeout = "15s"
+user_agent = "MarketDataCollector/0.1"
+max_response_bytes = 16777216
+```
+
+1回の `collect` は固定6 GETのいずれか1件だけを実行し、上流応答を保存しません。先物・オプション登録一覧、全体・種類別・指定銘柄の板情報を取得できます。個別銘柄の `symbol_market_data` だけ `symbol` が必須です。6 datasetと固定パスは [kabus-controller対応状況](kabus-controller.md) を確認してください。
+
+既定接続先は平文HTTPです。KabusControllerの8080番ポートをインターネットへ公開せず、信頼できるLANまたはVPN内に通信経路を限定してください。KabusControllerへの疎通は起動や `datalist` だけでは確認できないため、構築後に必要なdatasetの `collect` も実行します。
+
+### 2.3 Polymarketを利用する場合
 
 Polymarket providerは同梱設定で `enabled=true` です。公開Gamma、CLOB、Data APIのGETだけを使うため、APIキー、wallet署名、Python、Node.js、追加パッケージは不要です。`enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ通信します。
 
@@ -97,6 +117,7 @@ max_response_bytes = 16777216
 - Linuxでは通常、OSのCA証明書一式
 - Python providerを使用する場合だけ、64ビット版CPython 3.12以上
 - J-Quants providerを使用する場合は、J-Quants APIへのHTTPS通信、契約プラン、有効なAPIキー
+- kabus-controller providerを使用する場合は、KabusControllerのHTTP APIへのLAN内通信。APIキーとPythonは不要
 - Polymarket providerを使用する場合は、Gamma、CLOB、Data APIへのHTTPS通信。APIキーとPythonは不要
 
 Pythonの固定依存はCPython 3.14 / Windowsで検証しています。現在の `requirements.lock.txt` はPython 3.12未満では導入できないため、手順上の下限を3.12とします。
@@ -328,7 +349,7 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/datalist
 ```
 
-`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば構築完了です。現在の同梱設定を変更していなければ、`225225jp`、`polymarket`、`yfinance`、`investingpy` の4件が掲載され、`polymarket` 内には37 datasetがあります。Git管理外のローカル設定で `jquants` も有効化した場合は、5 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はPythonパッケージのimportまでは行わないため、Python側は前述の `pip check` とimport確認も実施してください。
+`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば起動確認は完了です。現在の同梱設定を変更していなければ、`225225jp`、`kabus-controller`、`polymarket`、`yfinance`、`investingpy` の5件が掲載され、`kabus-controller` 内には6 dataset、`polymarket` 内には37 datasetがあります。Git管理外のローカル設定で `jquants` も有効化した場合は、6 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はKabusControllerへの疎通やPythonパッケージのimportまでは行いません。KabusController側は実際の `collect`、Python側は前述の `pip check` とimport確認も実施してください。
 
 既定の待受は全ネットワークインターフェースのTCP 8080番です。到達範囲はOSまたはネットワーク側のファイアウォールで調整してください。
 
@@ -405,6 +426,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 - `python/requirements.txt`
 - `python/requirements.lock.txt`
 - `docs/jquants.md` を `jquants.md` という名前でコピー
+- `docs/kabus-controller.md` を `kabus-controller.md` という名前でコピー
 - `docs/polymarket.md` を `polymarket.md` という名前でコピー
 - この手順書を `SETUP.md` という名前でコピー
 
@@ -417,6 +439,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o dist/windows-amd64
 | `PROVIDER_UNAVAILABLE`                | 仮想環境へのlock一式の導入、import確認、Python版                     |
 | J-Quants有効化時に起動できない        | `conf/*.local.toml` の `providers.jquants.api_key`、`plan`、`addons` |
 | J-Quants収集が `PROVIDER_UNAVAILABLE` | 契約プラン・アドオン、APIキー、利用枠、403/429応答                   |
+| kabus-controller収集が失敗する        | `base_url`、LAN疎通、KabusControllerの起動、本文上限、応答形式       |
 | Polymarket収集が失敗する              | 3 APIへのHTTPS疎通、本文上限、公式変更、429応答、利用条件            |
 | TCP 8080番で起動できない              | 同じポートを使用中の別プロセス、`SYSTEM.Port`                        |
 | Linuxで実行を拒否される               | `chmod +x ./MarketDataCollector` の実行有無                          |
