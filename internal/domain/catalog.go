@@ -58,8 +58,8 @@ type DataList struct {
 //   - ProviderとDatasetはdatalistに掲載された識別子を使う
 //   - Parametersはデータセット固有のJSONオブジェクトを保持する
 type CollectRequest struct {
-	Provider   string         `json:"provider" jsonschema:"データ提供元の識別子"`
-	Dataset    string         `json:"dataset" jsonschema:"収集するデータセットの識別子"`
+	Provider   string         `json:"provider" jsonschema:"この会話で一覧を未確認の場合は先にdatalistで全候補を比較して選ぶ、データ提供元の識別子です。"`
+	Dataset    string         `json:"dataset" jsonschema:"datalistで選択したproviderに掲載されているデータセットの識別子です。"`
 	Parameters map[string]any `json:"parameters,omitempty" jsonschema:"データセット固有の入力項目"`
 }
 

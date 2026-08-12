@@ -526,7 +526,7 @@ func yfinanceDescriptor() domain.ProviderDescriptor {
 	return domain.ProviderDescriptor{
 		Name:        "yfinance",
 		DisplayName: "yfinance / Yahoo Finance",
-		Description: "yfinanceを利用してYahoo Financeの情報を要求時に取得します。",
+		Description: "yfinanceを利用し、Yahoo Financeから世界の株式等の銘柄情報、価格履歴、財務、分析、保有者、オプション、ニュースを取得します。",
 		Datasets: []domain.DatasetDescriptor{
 			{Name: "quote", Description: "銘柄の基本情報を返します。", Parameters: []domain.ParameterDescriptor{ticker}},
 			{Name: "history", Description: "単一銘柄の価格履歴を返します。", Parameters: historyOptions},
@@ -588,7 +588,7 @@ func investingpyDescriptor() domain.ProviderDescriptor {
 	return domain.ProviderDescriptor{
 		Name:        "investingpy",
 		DisplayName: "investpy / Investing.com",
-		Description: "Investing.comから情報を取得します。",
+		Description: "非公式investpyを利用し、Investing.comから世界の株式、ETF、ファンド、指数、為替、商品、債券、暗号資産、経済指標、テクニカル情報を取得します。",
 		Datasets: []domain.DatasetDescriptor{
 			{Name: "search", Description: "商品種別を指定して銘柄を横断検索します。", Parameters: []domain.ParameterDescriptor{
 				product, pythonParameter("query", "string", true, "検索語。", nil, nil),

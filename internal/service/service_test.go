@@ -78,7 +78,7 @@ TestServiceSharesCatalogAndCollectionContract は、一覧と収集の共通契�
 func TestServiceSharesCatalogAndCollectionContract(t *testing.T) {
 	collector := &fakeCollector{
 		descriptor: domain.ProviderDescriptor{
-			Name: "test", DisplayName: "テスト",
+			Name: "test", DisplayName: "テスト", Description: "テスト用の市場価格を取得します。",
 			Datasets: []domain.DatasetDescriptor{{
 				Name: "prices", Description: "価格",
 				Parameters: []domain.ParameterDescriptor{{Name: "symbol", Allowed: []string{"A"}}},
@@ -134,7 +134,7 @@ TestServiceRejectsUnknownProviderAndDataset は、未知のproviderとdatasetを
 */
 func TestServiceRejectsUnknownProviderAndDataset(t *testing.T) {
 	collector := &fakeCollector{descriptor: domain.ProviderDescriptor{
-		Name: "test", DisplayName: "テスト",
+		Name: "test", DisplayName: "テスト", Description: "テスト用の市場価格を取得します。",
 		Datasets: []domain.DatasetDescriptor{{Name: "prices"}},
 	}}
 	service, err := New([]provider.Collector{collector})
@@ -202,6 +202,31 @@ func TestServiceRejectsTypedNilCollector(t *testing.T) {
 // ----------------------------------------
 
 /*
+TestServiceRejectsProviderWithoutDescription は、provider概要の起動時検証を確認します。
+
+機能:
+  - MCP初期指示とdatalistの選択材料になるprovider概要の空値を拒否する
+  - 空白だけの概要も空値として扱う
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestServiceRejectsProviderWithoutDescription(t *testing.T) {
+	collector := &fakeCollector{descriptor: domain.ProviderDescriptor{
+		Name: "test", DisplayName: "テスト", Description: " \t\n",
+		Datasets: []domain.DatasetDescriptor{{Name: "data"}},
+	}}
+	if _, err := New([]provider.Collector{collector}); err == nil {
+		t.Fatal("New() error = nil, 空のprovider概要の拒否を期待")
+	}
+}
+
+// ----------------------------------------
+
+/*
 TestServiceRejectsUnreachableDescriptorIdentifiers は、公開識別子の起動時検証を確認します。
 
 機能:
@@ -216,9 +241,9 @@ TestServiceRejectsUnreachableDescriptorIdentifiers は、公開識別子の起�
 */
 func TestServiceRejectsUnreachableDescriptorIdentifiers(t *testing.T) {
 	testCases := []domain.ProviderDescriptor{
-		{Name: " test", DisplayName: "テスト", Datasets: []domain.DatasetDescriptor{{Name: "data"}}},
-		{Name: "test", DisplayName: "テスト", Datasets: []domain.DatasetDescriptor{{Name: "data "}}},
-		{Name: "test", DisplayName: "テスト", Datasets: []domain.DatasetDescriptor{{
+		{Name: " test", DisplayName: "テスト", Description: "テスト概要", Datasets: []domain.DatasetDescriptor{{Name: "data"}}},
+		{Name: "test", DisplayName: "テスト", Description: "テスト概要", Datasets: []domain.DatasetDescriptor{{Name: "data "}}},
+		{Name: "test", DisplayName: "テスト", Description: "テスト概要", Datasets: []domain.DatasetDescriptor{{
 			Name:       "data",
 			Parameters: []domain.ParameterDescriptor{{Name: "code"}, {Name: "code"}},
 		}}},

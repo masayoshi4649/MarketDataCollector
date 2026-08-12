@@ -184,7 +184,7 @@ MCPクライアントには、Streamable HTTPエンドポイントとして次�
 http://127.0.0.1:8080/mcp
 ```
 
-最初に `datalist` を呼び、返されたproviderとdatasetを `collect` へ指定します。
+MCPの初期指示と `collect` のtool descriptionには、設定上有効な全データソースの識別子、表示名、対象地域・資産・データ種別を含む概要が自動掲載されます。モデルには、この会話で一覧を未確認の場合、最初の `collect` より前に `datalist` を呼んで全providerを比較するよう案内します。一般知識、掲載順、dataset件数から特定providerを暗黙の既定値にはせず、選択したprovider、dataset、理由を利用者へ示します。
 
 `datalist` は一覧の固定階層、`collect` は収集結果の共通外枠を `outputSchema` として公開します。`collect.data` はproviderとdatasetに固有のため任意のJSON値です。
 

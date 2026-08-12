@@ -70,7 +70,7 @@ func (c *Collector) Descriptor() domain.ProviderDescriptor {
 	return domain.ProviderDescriptor{
 		Name:        "225225jp",
 		DisplayName: "225225.jp",
-		Description: "225225.jpの画面用内部数値配信を取得します。",
+		Description: "225225.jpの画面用内部数値配信から、日本・米国を中心とする指数・株式、日経225構成・寄与度、為替、商品、暗号資産を取得します。",
 		Datasets:    datasetDescriptors(),
 	}
 }

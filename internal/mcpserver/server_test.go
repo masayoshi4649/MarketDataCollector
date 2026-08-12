@@ -113,6 +113,23 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	if _, exists := toolsByName["collect"]; !exists {
 		t.Fatal("collectツールがありません")
 	}
+	if !strings.Contains(toolsByName["datalist"].Description, "一覧を未確認の場合") ||
+		!strings.Contains(toolsByName["datalist"].Description, "最初に呼び出し") {
+		t.Errorf("datalistの説明 = %q, 最初に呼び出す案内を期待", toolsByName["datalist"].Description)
+	}
+	for _, expected := range []string{
+		"未確認の場合は先にdatalist",
+		"全providerを比較",
+		"掲載順、dataset件数を優先度として特定providerを既定選択しない",
+		"設定上有効なデータソース概要",
+		"provider: test",
+	} {
+		if !strings.Contains(toolsByName["collect"].Description, expected) {
+			t.Errorf("collectの説明 = %q, %qを期待", toolsByName["collect"].Description, expected)
+		}
+	}
+	assertToolInputSchemaDescription(t, toolsByName["collect"], "provider", "datalistで全候補を比較")
+	assertToolInputSchemaDescription(t, toolsByName["collect"], "dataset", "datalistで選択したprovider")
 	for _, tool := range tools.Tools {
 		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint ||
 			tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
@@ -171,6 +188,102 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	}
 	if len(service.requests) != 1 || service.requests[0].Parameters["symbol"] != "A" {
 		t.Errorf("共通サービス要求 = %+v, symbol=Aを期待", service.requests)
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestServerPublishesDataSourceDiscoveryInstructions は、MCP初期指示のデータソース選択手順を検証します。
+
+機能:
+  - 現在有効な全providerの概要がinitialize応答へ含まれることを確認する
+  - datalistの先行実行、全候補比較、特定providerの決め打ち禁止を確認する
+  - datasetの詳細や件数を初期指示へ展開しないことを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestServerPublishesDataSourceDiscoveryInstructions(t *testing.T) {
+	service := &fakeService{dataList: domain.DataList{
+		Version: domain.APIVersion,
+		Providers: []domain.ProviderDescriptor{
+			{
+				Name: "source-a", DisplayName: "データソースA", Description: "日本株の価格を取得します。",
+				Datasets: []domain.DatasetDescriptor{
+					{Name: "prices", Parameters: []domain.ParameterDescriptor{}},
+					{Name: "financials", Parameters: []domain.ParameterDescriptor{}},
+				},
+			},
+			{
+				Name: "source-b", DisplayName: "データソースB", Description: "海外市場の情報を取得します。",
+				Datasets: []domain.DatasetDescriptor{
+					{Name: "markets", Parameters: []domain.ParameterDescriptor{}},
+				},
+			},
+		},
+	}}
+	server := newTestServer(t, service)
+	session := connectTestClient(t, server.Handler())
+	initializeResult := session.InitializeResult()
+	if initializeResult == nil {
+		t.Fatal("initialize結果がありません")
+	}
+	instructions := initializeResult.Instructions
+	for _, expected := range []string{
+		"一覧をまだ確認していない場合、最初のcollectより前にdatalist",
+		"掲載順、dataset件数を優先度として特定providerを既定選択しない",
+		"全providerを",
+		"選択したprovider、dataset、選択理由",
+		"掲載順は優先度を表しません",
+		"データソースA（provider: source-a）: 日本株の価格を取得します。\n" +
+			"- データソースB（provider: source-b）: 海外市場の情報を取得します。",
+	} {
+		if !strings.Contains(instructions, expected) {
+			t.Errorf("MCP初期指示 = %q, %qを期待", instructions, expected)
+		}
+	}
+	for _, unexpected := range []string{"prices", "financials", "markets", "dataset: 2件", "dataset: 1件"} {
+		if strings.Contains(instructions, unexpected) {
+			t.Errorf("MCP初期指示 = %q, datasetの詳細または件数 %q は不要", instructions, unexpected)
+		}
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestServerInstructionsHandleEmptyDataList は、利用可能なproviderがない場合の初期指示を検証します。
+
+機能:
+  - providerが0件でもMCPへ接続できることを確認する
+  - provider設定を確認する案内がinitialize応答へ含まれることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestServerInstructionsHandleEmptyDataList(t *testing.T) {
+	server := newTestServer(t, &fakeService{dataList: domain.DataList{
+		Version:   domain.APIVersion,
+		Providers: []domain.ProviderDescriptor{},
+	}})
+	session := connectTestClient(t, server.Handler())
+	initializeResult := session.InitializeResult()
+	if initializeResult == nil {
+		t.Fatal("initialize結果がありません")
+	}
+	if !strings.Contains(initializeResult.Instructions, "設定上有効なデータソース概要") ||
+		!strings.Contains(initializeResult.Instructions, "- ありません") {
+		t.Errorf("MCP初期指示 = %q, データソースなしの案内を期待", initializeResult.Instructions)
+	}
+	if !strings.Contains(initializeResult.Instructions, "provider設定を確認") {
+		t.Errorf("MCP初期指示 = %q, provider設定の確認案内を期待", initializeResult.Instructions)
 	}
 }
 
@@ -433,5 +546,51 @@ func assertToolOutputSchema(t *testing.T, tool *mcp.Tool, propertyNames ...strin
 		if _, exists := properties[propertyName]; !exists {
 			t.Errorf("%s output schemaに%sがありません", tool.Name, propertyName)
 		}
+	}
+}
+
+// ----------------------------------------
+
+/*
+assertToolInputSchemaDescription は、公開ツールの入力項目説明を検証します。
+
+機能:
+  - input schemaがobjectとして公開されることを確認する
+  - 指定した入力項目のdescriptionへ期待する案内が含まれることを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+  - tool *mcp.Tool: 検証する公開ツール
+  - propertyName string: schemaで確認する入力項目名
+  - expected string: descriptionに含まれることを期待する文字列
+
+返り値:
+  - なし
+*/
+func assertToolInputSchemaDescription(
+	t *testing.T,
+	tool *mcp.Tool,
+	propertyName string,
+	expected string,
+) {
+	t.Helper()
+	if tool == nil {
+		t.Fatal("input schemaを検証するツールがありません")
+	}
+	schema, ok := tool.InputSchema.(map[string]any)
+	if !ok {
+		t.Fatalf("%s input schema = %#v, JSON objectを期待", tool.Name, tool.InputSchema)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s input schema properties = %#v, JSON objectを期待", tool.Name, schema["properties"])
+	}
+	property, ok := properties[propertyName].(map[string]any)
+	if !ok {
+		t.Fatalf("%s input schemaの%s = %#v, JSON objectを期待", tool.Name, propertyName, properties[propertyName])
+	}
+	description, _ := property["description"].(string)
+	if !strings.Contains(description, expected) {
+		t.Errorf("%s input schemaの%s description = %q, %qを期待", tool.Name, propertyName, description, expected)
 	}
 }

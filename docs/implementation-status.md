@@ -37,6 +37,7 @@
 - [x] 指定Portの全インターフェースで待ち受け、REST/MCPへ共通の要求期限と本文上限を適用する
 - [x] Origin制限なしでCORS `*` を返す公開境界を文書化する
 - [x] MCPの両toolへoutput schemaを公開し、Schema再変換を避けて2^53超のJSON整数をRESTと同じ送信値で保持する
+- [x] MCP初期指示とcollect説明へ有効provider概要を掲載し、datalistで全候補を比較してから収集する手順を案内する
 - [x] docsへ構成、REST、MCP、設定、provider仕様を残す
 - [x] 通常テストを外部通信なしで実行できる
 

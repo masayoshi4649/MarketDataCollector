@@ -20,6 +20,8 @@ const (
 	serverName             = "market-data-collector"
 	serverVersion          = "0.1.0"
 	defaultMaxRequestBytes = int64(1024 * 1024)
+	dataListToolName       = "datalist"
+	collectToolName        = "collect"
 )
 
 // Service は、MCPがREST APIと共有するユースケースを表します。
@@ -38,7 +40,7 @@ type Server struct {
 	handler http.Handler
 }
 
-// New は、datalistとcollectを登録したStreamable HTTP MCPを生成します。
+// New は、データソース選択の初期指示、datalist、collectを登録したStreamable HTTP MCPを生成します。
 //
 // 引数:
 //   - service Service: REST APIと共有する収集ユースケース。
@@ -61,6 +63,8 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	if logger == nil {
 		logger = slog.Default()
 	}
+	dataList := service.DataList()
+	dataSourceSummary := buildDataSourceSummary(dataList)
 	dataListOutputSchema, err := outputSchemaFor[domain.DataList](
 		"利用可能な市場データprovider、dataset、入力項目の一覧です。",
 	)
@@ -78,7 +82,8 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	protocolServer := mcp.NewServer(
 		&mcp.Implementation{Name: serverName, Version: serverVersion},
 		&mcp.ServerOptions{
-			Logger: logger,
+			Instructions: buildServerInstructions(dataSourceSummary),
+			Logger:       logger,
 			Capabilities: &mcp.ServerCapabilities{
 				Tools: &mcp.ToolCapabilities{},
 			},
@@ -92,8 +97,9 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	notDestructive := false
 	openWorld := true
 	mcp.AddTool(protocolServer, &mcp.Tool{
-		Name:         "datalist",
-		Description:  "利用可能なprovider、dataset、入力項目を返します。外部通信は行いません。RESTのGET /api/datalistと同じ仕様です。",
+		Name: dataListToolName,
+		Description: "この会話で現在の一覧を未確認の場合、市場データを収集する前に最初に呼び出し、設定上有効な全providerを比較するための一覧です。" +
+			"provider、dataset、入力項目を返し、外部通信は行いません。RESTのGET /api/datalistと同じ仕様です。",
 		OutputSchema: dataListOutputSchema,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ一覧",
@@ -104,8 +110,11 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 		},
 	}, server.dataList)
 	mcp.AddTool(protocolServer, &mcp.Tool{
-		Name:         "collect",
-		Description:  "providerとdatasetを指定し、要求時に市場情報を収集して返します。RESTのPOST /api/collectと同じ入力・出力です。",
+		Name: collectToolName,
+		Description: "providerとdatasetを指定し、要求時に市場情報を収集して返します。" +
+			"この会話で現在の一覧を未確認の場合は先にdatalistを呼び、設定上有効な全providerを比較してから、掲載された識別子と入力項目を指定してください。" +
+			"ユーザーがproviderを指定していない場合、一般知識、掲載順、dataset件数を優先度として特定providerを既定選択しないでください。" +
+			"RESTのPOST /api/collectと同じ入力・出力です。\n\n設定上有効なデータソース概要:\n" + dataSourceSummary,
 		OutputSchema: collectOutputSchema,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ収集",
@@ -129,6 +138,61 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	limitedHandler := http.MaxBytesHandler(streamableHandler, maxRequestBytes)
 	server.handler = protectHTTP(limitedHandler, maxRequestBytes)
 	return server, nil
+}
+
+// buildDataSourceSummary は、設定上有効なproviderの短い一覧を生成します。
+//
+// 主な特徴:
+//   - provider識別子、表示名、用途概要だけを列挙する
+//   - datasetと入力項目の詳細はdatalistへ集約して重複させない
+//   - 表示用文字列の改行と連続空白を単一の空白へ正規化する
+//
+// 引数:
+//   - dataList domain.DataList: 外部通信なしで取得した現在有効なprovider一覧。
+//
+// 返り値:
+//   - string: MCPの初期指示とtool説明へ掲載するprovider概要。
+func buildDataSourceSummary(dataList domain.DataList) string {
+	if len(dataList.Providers) == 0 {
+		return "- ありません。サーバーのprovider設定を確認してください。"
+	}
+	var builder strings.Builder
+	for _, descriptor := range dataList.Providers {
+		_, _ = fmt.Fprintf(
+			&builder,
+			"- %s（provider: %s）: %s\n",
+			strings.Join(strings.Fields(descriptor.DisplayName), " "),
+			descriptor.Name,
+			strings.Join(strings.Fields(descriptor.Description), " "),
+		)
+	}
+	return strings.TrimSuffix(builder.String(), "\n")
+}
+
+// ----------------------------------------
+
+// buildServerInstructions は、MCP接続時にモデルへ渡すデータソース選択手順を生成します。
+//
+// 主な特徴:
+//   - 会話内で未確認の場合は最初のcollectより前にdatalistを確認するよう案内する
+//   - 一覧順やdataset件数を優先度にせず、用途に応じて全providerを比較するよう案内する
+//   - 選択したprovider、dataset、理由を利用者へ明示するよう案内する
+//
+// 引数:
+//   - dataSourceSummary string: buildDataSourceSummaryで生成した設定上有効なprovider概要。
+//
+// 返り値:
+//   - string: MCPのinitialize応答へ設定する日本語の利用手順。
+func buildServerInstructions(dataSourceSummary string) string {
+	var builder strings.Builder
+	builder.WriteString("このサーバーで市場データを扱う場合は、次の手順を守ってください。\n")
+	builder.WriteString("1. この会話で現在の一覧をまだ確認していない場合、最初のcollectより前にdatalistを呼び、設定上有効な全provider、dataset、入力項目を確認してください。\n")
+	builder.WriteString("2. ユーザーがproviderを明示していない場合、一般知識、一覧の掲載順、dataset件数を優先度として特定providerを既定選択しないでください。\n")
+	builder.WriteString("3. datalistに掲載された全providerを、対象地域、資産、データ種別、入力条件に照らして比較し、目的に最も合うproviderとdatasetを選んでください。同程度に適合する候補がある場合は候補を示し、判断に必要な条件が不足する場合だけユーザーへ確認してください。\n")
+	builder.WriteString("4. collectにはdatalistに掲載された識別子と入力項目だけを使用し、存在しない値を推測しないでください。選択したprovider、dataset、選択理由を利用者へ明示してください。\n")
+	builder.WriteString("\n設定上有効なデータソース概要（掲載順は優先度を表しません）:\n")
+	builder.WriteString(dataSourceSummary)
+	return builder.String()
 }
 
 // Handler は、HTTP受信条件を含むMCPハンドラーを返します。

@@ -6,6 +6,7 @@
 - 公式Go SDKのStreamable HTTPを使用する。
 - ステートレスかつJSON応答で動作する。
 - セッションID、SSE、resources、prompts、loggingは公開しない。
+- initialize応答のinstructionsへ、設定上有効な全providerの短い概要とデータソース選択手順を公開する。
 - MCPクライアントとのprotocol version交渉はSDKへ委ねる。
 - `Content-Type: application/json` を必須とする。
 - CORS preflightの `OPTIONS` を除き、POST以外、圧縮要求、本文上限超過を拒否する。
@@ -29,9 +30,23 @@ http://127.0.0.1:8080/mcp
 
 tool名、共通入力、共通出力をRESTの末尾操作名と一致させる。
 
+## 初期指示とデータソース選択
+
+MCP接続時のinitialize応答では、設定上有効なproviderを、識別子、表示名、対象地域・資産・データ種別を含む概要とともに短く列挙する。この一覧は `service.DataList` から生成するため、無効なproviderや未契約のJ-Quants機能を別途静的管理しない。同じ概要は `collect` のtool descriptionにも掲載し、instructionsをモデルへ渡さないクライアントでも候補を発見できるようにする。掲載順は優先度を表さず、dataset件数も選択基準にしない。
+
+モデルには次の順序を案内する。
+
+1. この会話で現在の一覧を未確認の場合、最初の `collect` より前に `datalist` を呼ぶ。
+2. 返された全providerを地域、資産、データ種別、入力条件で比較する。
+3. ユーザーがproviderを明示していない場合、一般知識、掲載順、dataset件数から特定providerを暗黙の既定値にしない。
+4. `datalist` に掲載されたprovider、dataset、parametersだけを `collect` へ指定する。
+5. 選択したprovider、dataset、選択理由を利用者へ示す。同程度に適合する候補がある場合は候補も示す。
+
+initializeのprovider概要は、接続直後に候補の存在を知らせるための短い索引である。datasetとparametersの正本は `datalist` とし、初期指示へ全件を重複掲載しない。MCPのinstructionsとtool descriptionはモデルへの指示であり、クライアントがモデルへ渡さない場合やモデルが従わない場合まで、サーバー側で強制するものではない。
+
 ## `datalist`
 
-入力項目はない。外部通信を行わず、`enabled=true` のproviderだけを含むRESTと同じ `domain.DataList` をstructured contentとJSON text contentとして返す。providerの掲載自体が利用可能であることを表す。
+入力項目はない。この会話で現在の一覧を未確認の場合、市場データを扱う前に最初に呼び出すtoolである。外部通信を行わず、`enabled=true` のproviderだけを含むRESTと同じ `domain.DataList` をstructured contentとJSON text contentとして返す。providerの掲載は設定上有効であることを表し、上流の疎通成功までは保証しない。
 
 用途:
 
@@ -62,6 +77,8 @@ tool annotationは読み取り専用、非破壊、閉じた世界として公�
 ```
 
 入力と出力は [REST API仕様](rest-api.md) の `/api/collect` と同じである。成功時は `domain.CollectResponse` をstructured contentとJSON text contentとして返す。
+
+この会話で現在の一覧を未確認で、ユーザーがproviderを明示していない場合は、先に `datalist` を呼んで全providerを比較する。一般知識、掲載順、dataset件数から特定providerを既定選択しない。
 
 output schemaには `version`、`provider`、`dataset`、`collected_at`、`metadata`、`data` の共通外枠を公開する。Schemaは `domain.CollectResponse` のGo型から生成する。provider固有 `data` はdatasetごとに形が異なるため、型を限定しないJSON値として説明し、具体的な入力と結果の意味は `datalist` とprovider仕様で公開する。
 

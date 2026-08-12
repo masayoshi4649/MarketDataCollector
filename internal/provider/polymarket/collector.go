@@ -96,7 +96,7 @@ func (c *Collector) Descriptor() domain.ProviderDescriptor {
 	}
 	return domain.ProviderDescriptor{
 		Name: "polymarket", DisplayName: "Polymarket",
-		Description: "認証不要のGamma、CLOB、Data公開APIを、1 collectあたり1 GETで読み取り専用収集します。",
+		Description: "認証不要のGamma、CLOB、Data公開APIから、予測市場・イベント、注文板・価格履歴、公開ウォレットのポジション等を読み取り専用収集します。",
 		Datasets:    datasets,
 	}
 }

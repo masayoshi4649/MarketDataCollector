@@ -143,6 +143,8 @@ Python専用枠の待機を含めてPython処理期限を適用するため、�
 
 MCPの `datalist` は固定階層、`collect` は共通外枠のoutput schemaを公開する。SchemaはRESTと共有するdomain型の `json`・`jsonschema` タグから生成し、DTOとSchemaの構造を二重定義しない。`collect.data` はprovider固有の動的JSON値として型を限定しない。成功値を一度だけJSON化してstructured contentとtext contentの両方へ同じ生JSONを設定し、SDKのJSON Schema適用時に発生するfloat64再変換を避ける。これにより大整数を丸めず、RESTのJSONと送信値を一致させる。
 
+MCP初期化時のinstructionsと `collect` のtool descriptionには、`service.DataList` から生成した設定上有効な全providerの短い概要を掲載する。モデルには、会話内で一覧を未確認の場合は最初の収集前に `datalist` を呼び、一覧順やdataset件数を優先度にせず全providerを比較するよう案内する。provider、dataset、parametersの詳細な正本は `datalist` に集約し、初期指示へ重複展開しない。
+
 ## エラー境界
 
 共通分類は `INVALID_ARGUMENT`、`NOT_FOUND`、`PROVIDER_UNAVAILABLE`、`UPSTREAM_ERROR`、`TIMEOUT`、`INTERNAL` とする。

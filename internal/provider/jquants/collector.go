@@ -143,7 +143,7 @@ func (c *Collector) Descriptor() domain.ProviderDescriptor {
 	return domain.ProviderDescriptor{
 		Name:        "jquants",
 		DisplayName: "J-Quants API",
-		Description: fmt.Sprintf("J-Quants API V2の%sプランで利用可能な情報を取得します。", c.plan),
+		Description: fmt.Sprintf("J-Quants API V2の%sプランで利用可能な、日本株の銘柄・株価、投資部門・信用・空売り、財務・決算、指数、デリバティブ等の公式データを取得します。", c.plan),
 		Datasets:    datasets,
 	}
 }

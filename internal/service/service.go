@@ -167,19 +167,22 @@ func (s *Service) Collect(ctx context.Context, request domain.CollectRequest) (d
 
 // ----------------------------------------
 
-// validateProviderDescriptor は、providerの識別子とdataset重複を確認します。
+// validateProviderDescriptor は、providerの公開情報、識別子、dataset重複を確認します。
 //
 // 引数:
 //   - descriptor domain.ProviderDescriptor: 起動時に登録するprovider定義。
 //
 // 返り値:
-//   - error: 必須値不足またはdataset重複を検出した場合のエラー。
+//   - error: 表示名・概要の不足、不正な識別子、dataset重複を検出した場合のエラー。
 func validateProviderDescriptor(descriptor domain.ProviderDescriptor) error {
 	if err := validateIdentifier(descriptor.Name, "provider名"); err != nil {
 		return err
 	}
 	if strings.TrimSpace(descriptor.DisplayName) == "" {
 		return errors.New("provider表示名が空です")
+	}
+	if strings.TrimSpace(descriptor.Description) == "" {
+		return errors.New("provider概要が空です")
 	}
 	if len(descriptor.Datasets) == 0 {
 		return errors.New("datasetが1件もありません")
