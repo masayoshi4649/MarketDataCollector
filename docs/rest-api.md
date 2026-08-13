@@ -92,7 +92,7 @@ Origin制限はない。CORSの `*` はブラウザによる任意Originから�
 }
 ```
 
-`data` はdataset固有の値である。provider共通の識別子、完了時刻、実行ライブラリ等は外側へ保持する。225225.jpの取得URLと取得時刻はdataset固有データ内の `metadata` または `sources` に含む。J-Quantsは上流レスポンス全体を `data` に保持するため、上流の `data` 配列、`pagination_key`、`cursor`、署名付きURLはこの内側に現れる。kabus-controllerも上流JSONをキー変換せず `data` に保持し、取得先、状態、本文サイズ、読取専用・要求時取得の印は外側のmetadataに含める。Polymarketも上流の `next_cursor` 等をdataset固有 `data` 内に保持し、検索の `page`、Gamma/CLOBのcursor、Dataのoffsetを自動追跡・結合しない。ページング対象では外側の `metadata.pagination.total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ現れる。
+`data` はdataset固有の値である。provider共通の識別子、完了時刻、実行ライブラリ等は外側へ保持する。225225.jpの取得URLと取得時刻はdataset固有データ内の `metadata` または `sources` に含む。J-Quantsは上流レスポンス全体を `data` に保持するため、上流の `data` 配列、`pagination_key`、`cursor`、署名付きURLはこの内側に現れる。kabus-controllerは単一endpointでは上流JSONを保持し、NTペア、登録済みOPチェーン、controller既知登録容量では複数応答を正規化して `data` に保持する。取得先、状態、本文サイズ、要求時取得、鮮度、銘柄登録副作用は外側のmetadataに含める。Polymarketも上流の `next_cursor` 等をdataset固有 `data` 内に保持し、検索の `page`、Gamma/CLOBのcursor、Dataのoffsetを自動追跡・結合しない。ページング対象では外側の `metadata.pagination.total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ現れる。
 
 ## エラー
 

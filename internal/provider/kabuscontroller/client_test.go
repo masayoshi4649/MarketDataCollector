@@ -9,19 +9,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
 
 /*
-TestClientFetchUsesExactGETPathsAndHeaders は、6 datasetの固定HTTP要求を検証します。
+TestClientFetchUsesExactGETPathsQueriesAndHeaders は、全単一GET datasetのHTTP要求を検証します。
 
 機能:
-  - 各datasetを仕様どおりのGET pathへ1回だけ送信する
-  - 個別銘柄のsymbolを末尾の1 path segmentへ変換する
-  - User-Agent、Accept、空queryと正常応答の付帯情報を確認する
+  - route種別に応じた固定pathと大文字小文字を含むquery名を確認する
+  - User-AgentとJSON受信headerだけを付け、X-API-KEY等の認証情報を送らないことを確認する
+  - queryを除いた取得元URLと応答付帯情報を確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -29,12 +31,13 @@ TestClientFetchUsesExactGETPathsAndHeaders は、6 datasetの固定HTTP要求を
 返り値:
   - なし
 */
-func TestClientFetchUsesExactGETPathsAndHeaders(t *testing.T) {
+func TestClientFetchUsesExactGETPathsQueriesAndHeaders(t *testing.T) {
 	testCases := []struct {
-		name     string
-		dataset  string
-		symbol   string
-		wantPath string
+		name       string
+		dataset    string
+		parameters map[string]string
+		wantPath   string
+		wantQuery  string
 	}{
 		{
 			name:     "先物登録一覧",
@@ -62,10 +65,88 @@ func TestClientFetchUsesExactGETPathsAndHeaders(t *testing.T) {
 			wantPath: "/api/trade/market-data/option",
 		},
 		{
-			name:     "個別銘柄板情報",
-			dataset:  "symbol_market_data",
-			symbol:   "NK225M-2026.09",
+			name:    "個別銘柄板情報",
+			dataset: "symbol_market_data",
+			parameters: map[string]string{
+				"symbol": "NK225M-2026.09",
+			},
 			wantPath: "/api/trade/market-data/NK225M-2026.09",
+		},
+		{
+			name:       "詳細ランキング",
+			dataset:    "kabus_ranking",
+			parameters: map[string]string{"ranking_type": "2", "exchange_division": "TP"},
+			wantPath:   "/kabusapi/ranking",
+			wantQuery:  "ExchangeDivision=TP&Type=2",
+		},
+		{
+			name:       "株式規制情報",
+			dataset:    "kabus_regulations",
+			parameters: map[string]string{"symbol": "7203", "exchange": "1"},
+			wantPath:   "/kabusapi/regulations/7203@1",
+		},
+		{
+			name:       "先物銘柄解決",
+			dataset:    "derivative_symbol_resolver",
+			parameters: map[string]string{"kind": "future", "product_code": "NK225mini", "deriv_month": "202609"},
+			wantPath:   "/kabusapi/symbolname/future",
+			wantQuery:  "DerivMonth=202609&FutureCode=NK225mini",
+		},
+		{
+			name:    "オプション銘柄解決",
+			dataset: "derivative_symbol_resolver",
+			parameters: map[string]string{
+				"kind": "option", "product_code": "NK225op", "deriv_month": "202609",
+				"put_or_call": "C", "strike_price": "69000",
+			},
+			wantPath:  "/kabusapi/symbolname/option",
+			wantQuery: "DerivMonth=202609&OptionCode=NK225op&PutOrCall=C&StrikePrice=69000",
+		},
+		{
+			name:    "ミニオプション限週銘柄解決",
+			dataset: "derivative_symbol_resolver",
+			parameters: map[string]string{
+				"kind": "mini_option_weekly", "deriv_month": "202609", "deriv_weekly": "1",
+				"put_or_call": "P", "strike_price": "68000",
+			},
+			wantPath:  "/kabusapi/symbolname/minioptionweekly",
+			wantQuery: "DerivMonth=202609&DerivWeekly=1&PutOrCall=P&StrikePrice=68000",
+		},
+		{
+			name:       "任意銘柄板",
+			dataset:    "arbitrary_board_snapshot",
+			parameters: map[string]string{"symbol": "7203", "exchange": "1"},
+			wantPath:   "/kabusapi/board/7203@1",
+		},
+		{
+			name:       "銘柄追加情報",
+			dataset:    "kabus_symbol_info",
+			parameters: map[string]string{"symbol": "7203", "exchange": "1", "add_info": "true"},
+			wantPath:   "/kabusapi/symbol/7203@1",
+			wantQuery:  "addinfo=true",
+		},
+		{
+			name:       "優先市場",
+			dataset:    "kabus_primary_exchange",
+			parameters: map[string]string{"symbol": "7203"},
+			wantPath:   "/kabusapi/primaryexchange/7203",
+		},
+		{
+			name:       "為替",
+			dataset:    "kabus_fx_snapshot",
+			parameters: map[string]string{"pair": "usdjpy"},
+			wantPath:   "/kabusapi/exchange/usdjpy",
+		},
+		{
+			name:       "信用プレミアム料",
+			dataset:    "kabus_margin_premium",
+			parameters: map[string]string{"symbol": "9433"},
+			wantPath:   "/kabusapi/margin/marginpremium/9433",
+		},
+		{
+			name:     "APIソフトリミット",
+			dataset:  "kabus_api_soft_limits",
+			wantPath: "/kabusapi/apisoftlimit",
 		},
 	}
 
@@ -78,13 +159,18 @@ func TestClientFetchUsesExactGETPathsAndHeaders(t *testing.T) {
 				if request.Method != http.MethodGet || request.URL.Path != testCase.wantPath {
 					t.Errorf("HTTP要求 = %s %s, GET %sを期待", request.Method, request.URL.Path, testCase.wantPath)
 				}
-				if request.URL.RawQuery != "" {
-					t.Errorf("query = %q, 空を期待", request.URL.RawQuery)
+				if request.URL.RawQuery != testCase.wantQuery {
+					t.Errorf("query = %q, %qを期待", request.URL.RawQuery, testCase.wantQuery)
 				}
 				if request.Header.Get("User-Agent") != "kabus-controller-test/1.0" ||
 					request.Header.Get("Accept") != "application/json" ||
 					request.Header.Get("Accept-Encoding") != "gzip" {
 					t.Errorf("HTTP header = %v, User-Agent、Accept、Accept-Encodingの固定値を期待", request.Header)
+				}
+				for _, name := range []string{"X-API-KEY", "Authorization", "Cookie"} {
+					if values := request.Header.Values(name); len(values) != 0 {
+						t.Errorf("HTTP header %s = %v, 不送信を期待", name, values)
+					}
 				}
 				contentType := "application/json; charset=utf-8"
 				if testCase.dataset == "symbol_market_data" {
@@ -102,7 +188,7 @@ func TestClientFetchUsesExactGETPathsAndHeaders(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient() error = %v", err)
 			}
-			response, err := client.Fetch(context.Background(), testCase.dataset, testCase.symbol)
+			response, err := client.Fetch(context.Background(), testCase.dataset, testCase.parameters)
 			if err != nil {
 				t.Fatalf("Fetch() error = %v", err)
 			}
@@ -152,7 +238,7 @@ func TestClientFetchDoesNotFollowRedirects(t *testing.T) {
 	defer server.Close()
 
 	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
-	_, err := client.Fetch(context.Background(), "market_data", "")
+	_, err := client.Fetch(context.Background(), "market_data", nil)
 	var apiError *APIError
 	if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusTemporaryRedirect {
 		t.Fatalf("Fetch() error = %v, HTTP 307のAPIErrorを期待", err)
@@ -185,6 +271,42 @@ func TestNewClientAppliesDefaults(t *testing.T) {
 		client.userAgent != DefaultUserAgent ||
 		client.maxResponseBytes != DefaultMaxResponseBytes {
 		t.Errorf("Client既定値 = base:%q User-Agent:%q max:%d", client.baseURL.String(), client.userAgent, client.maxResponseBytes)
+	}
+}
+
+// ----------------------------------------
+
+// TestClientDoesNotUseCallerCookieJar は、上流へのCookie不送信を検証します。
+//
+// 主な特徴:
+//   - 呼び出し元HTTP clientにCookieJarがあっても複製clientでは無効化する
+//   - X-API-KEYを使わない接続境界へ別の認証状態を混入させない
+//
+// 引数:
+//   - t *testing.T: テスト状態を管理する値
+//
+// 返り値:
+//   - なし
+func TestClientDoesNotUseCallerCookieJar(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if cookie := request.Header.Get("Cookie"); cookie != "" {
+			t.Errorf("Cookie = %q, 不送信を期待", cookie)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, `{}`)
+	}))
+	defer server.Close()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New() error = %v", err)
+	}
+	parsed, _ := url.Parse(server.URL)
+	jar.SetCookies(parsed, []*http.Cookie{{Name: "session", Value: "secret"}})
+	httpClient := server.Client()
+	httpClient.Jar = jar
+	client := newKabusControllerHTTPTestClient(t, server.URL, httpClient, DefaultMaxResponseBytes)
+	if _, err := client.Fetch(context.Background(), "future_registrations", nil); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
 	}
 }
 
@@ -250,7 +372,7 @@ func TestClientFetchPreservesJSONNumbers(t *testing.T) {
 	defer server.Close()
 
 	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
-	response, err := client.Fetch(context.Background(), "market_data", "")
+	response, err := client.Fetch(context.Background(), "market_data", nil)
 	if err != nil {
 		t.Fatalf("Fetch() error = %v", err)
 	}
@@ -300,7 +422,7 @@ func TestClientFetchRejectsInvalidContentAndJSON(t *testing.T) {
 			defer server.Close()
 
 			client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
-			_, err := client.Fetch(context.Background(), "market_data", "")
+			_, err := client.Fetch(context.Background(), "market_data", nil)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantError) {
 				t.Errorf("Fetch() error = %v, %qを含むエラーを期待", err, testCase.wantError)
 			}
@@ -349,7 +471,7 @@ func TestClientFetchAppliesBodyLimitBeforeAndAfterGzip(t *testing.T) {
 			defer server.Close()
 
 			client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), 128)
-			_, err := client.Fetch(context.Background(), "market_data", "")
+			_, err := client.Fetch(context.Background(), "market_data", nil)
 			if err == nil || !strings.Contains(err.Error(), "上限") {
 				t.Errorf("Fetch() error = %v, 本文上限エラーを期待", err)
 			}
@@ -382,7 +504,7 @@ func TestClientFetchRejectsCompressedBodyOverLimit(t *testing.T) {
 	defer server.Close()
 
 	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), int64(len(compressed)-1))
-	_, err := client.Fetch(context.Background(), "market_data", "")
+	_, err := client.Fetch(context.Background(), "market_data", nil)
 	if err == nil || !strings.Contains(err.Error(), "上限") {
 		t.Errorf("Fetch() error = %v, gzip圧縮本文の上限エラーを期待", err)
 	}
@@ -413,7 +535,7 @@ func TestClientFetchReturnsSafeAPIError(t *testing.T) {
 	defer server.Close()
 
 	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
-	_, err := client.Fetch(context.Background(), "symbol_market_data", "NK225M")
+	_, err := client.Fetch(context.Background(), "symbol_market_data", map[string]string{"symbol": "NK225M"})
 	var apiError *APIError
 	if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusTooManyRequests ||
 		apiError.RetryAfter != "11" || apiError.Endpoint != "/api/trade/market-data/:symbol" {
@@ -427,10 +549,11 @@ func TestClientFetchReturnsSafeAPIError(t *testing.T) {
 // ----------------------------------------
 
 /*
-TestClientFetchRejectsInvalidDatasetAndSymbolBeforeHTTP は、通信前の固定入力検証を確認します。
+TestClientFetchRejectsInvalidRouteInputBeforeHTTP は、通信前の固定route入力検証を確認します。
 
 機能:
-  - 未知dataset、固定datasetへのsymbol、個別datasetの空・不正・衝突symbolを拒否する
+  - 未知dataset、未知入力、欠落、path注入、query注入、不正resolver構成を拒否する
+  - 複合datasetを単一HTTP Fetchとして実行しない
   - 不正入力ではHTTP要求を1件も発生させない
 
 引数:
@@ -439,7 +562,7 @@ TestClientFetchRejectsInvalidDatasetAndSymbolBeforeHTTP は、通信前の固定
 返り値:
   - なし
 */
-func TestClientFetchRejectsInvalidDatasetAndSymbolBeforeHTTP(t *testing.T) {
+func TestClientFetchRejectsInvalidRouteInputBeforeHTTP(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests.Add(1)
@@ -450,28 +573,84 @@ func TestClientFetchRejectsInvalidDatasetAndSymbolBeforeHTTP(t *testing.T) {
 	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
 
 	testCases := []struct {
-		name    string
-		dataset string
-		symbol  string
+		name       string
+		dataset    string
+		parameters map[string]string
 	}{
 		{name: "未知dataset", dataset: "unknown"},
-		{name: "固定datasetへのsymbol", dataset: "market_data", symbol: "NK225M"},
-		{name: "空symbol", dataset: "symbol_market_data"},
-		{name: "前後空白", dataset: "symbol_market_data", symbol: " NK225M "},
-		{name: "path区切り", dataset: "symbol_market_data", symbol: "../NK225M"},
-		{name: "固定future経路", dataset: "symbol_market_data", symbol: "future"},
-		{name: "固定option経路", dataset: "symbol_market_data", symbol: "option"},
-		{name: "100文字超", dataset: "symbol_market_data", symbol: strings.Repeat("A", 101)},
+		{name: "固定datasetへの未知項目", dataset: "market_data", parameters: map[string]string{"symbol": "NK225M"}},
+		{name: "空symbol", dataset: "symbol_market_data", parameters: map[string]string{}},
+		{name: "前後空白", dataset: "symbol_market_data", parameters: map[string]string{"symbol": " NK225M "}},
+		{name: "path区切り", dataset: "symbol_market_data", parameters: map[string]string{"symbol": "../NK225M"}},
+		{name: "query注入", dataset: "kabus_primary_exchange", parameters: map[string]string{"symbol": "7203?x=1"}},
+		{name: "fragment注入", dataset: "kabus_fx_snapshot", parameters: map[string]string{"pair": "usdjpy#x"}},
+		{name: "市場区切り注入", dataset: "kabus_regulations", parameters: map[string]string{"symbol": "7203@1", "exchange": "1"}},
+		{name: "固定future経路", dataset: "symbol_market_data", parameters: map[string]string{"symbol": "future"}},
+		{name: "固定option経路", dataset: "symbol_market_data", parameters: map[string]string{"symbol": "option"}},
+		{name: "100文字超", dataset: "symbol_market_data", parameters: map[string]string{"symbol": strings.Repeat("A", 101)}},
+		{name: "板市場不足", dataset: "arbitrary_board_snapshot", parameters: map[string]string{"symbol": "7203"}},
+		{name: "市場許容外", dataset: "kabus_regulations", parameters: map[string]string{"symbol": "7203", "exchange": "9"}},
+		{name: "resolver kind不明", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "unknown", "deriv_month": "202609"}},
+		{name: "先物商品不足", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "future", "deriv_month": "202609"}},
+		{name: "先物へオプション商品", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "future", "product_code": "NK225op", "deriv_month": "202609"}},
+		{name: "先物へオプション項目", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "future", "product_code": "NK225mini", "deriv_month": "202609", "put_or_call": "C"}},
+		{name: "オプション条件不足", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "option", "product_code": "NK225op", "deriv_month": "202609"}},
+		{name: "オプションへ先物商品", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "option", "product_code": "NK225mini", "deriv_month": "202609", "put_or_call": "C", "strike_price": "69000"}},
+		{name: "限週へ商品コード", dataset: "derivative_symbol_resolver", parameters: map[string]string{"kind": "mini_option_weekly", "product_code": "NK225miniop", "deriv_month": "202609", "deriv_weekly": "1", "put_or_call": "C", "strike_price": "69000"}},
+		{name: "NT複合dataset", dataset: "nt_pair_symbol_resolver", parameters: map[string]string{"deriv_month": "202609"}},
+		{name: "OPチェーン複合dataset", dataset: "option_chain_snapshot", parameters: map[string]string{"option_code": "NK225op", "deriv_month": "202609", "center_strike": "69000"}},
+		{name: "API容量複合dataset", dataset: "kabus_api_capacity"},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := client.Fetch(context.Background(), testCase.dataset, testCase.symbol); err == nil {
+			if _, err := client.Fetch(context.Background(), testCase.dataset, testCase.parameters); err == nil {
 				t.Error("Fetch() error = nil, 入力エラーを期待")
 			}
 		})
 	}
 	if requests.Load() != 0 {
 		t.Errorf("不正入力によるHTTP要求回数 = %d, 0を期待", requests.Load())
+	}
+}
+
+// ----------------------------------------
+
+/*
+TestClientFetchPreservesReversedBidAskBoardFields は、板応答のBid・Ask表現を生のまま保持することを検証します。
+
+機能:
+  - 上流仕様でBidPriceがSell1、AskPriceがBuy1と一致するfixtureを取得する
+  - Clientがキーの入れ替えや価格の正規化を行わないことを確認する
+
+引数:
+  - t *testing.T: テスト状態を管理する値
+
+返り値:
+  - なし
+*/
+func TestClientFetchPreservesReversedBidAskBoardFields(t *testing.T) {
+	payload := `{"BidPrice":1002,"AskPrice":1001,"Sell1":{"Price":1002,"Qty":10},"Buy1":{"Price":1001,"Qty":20}}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(writer, payload)
+	}))
+	defer server.Close()
+
+	client := newKabusControllerHTTPTestClient(t, server.URL, server.Client(), DefaultMaxResponseBytes)
+	response, err := client.Fetch(
+		context.Background(),
+		"arbitrary_board_snapshot",
+		map[string]string{"symbol": "7203", "exchange": "1"},
+	)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	body := response.Body.(map[string]any)
+	if body["BidPrice"].(json.Number).String() != "1002" ||
+		body["Sell1"].(map[string]any)["Price"].(json.Number).String() != "1002" ||
+		body["AskPrice"].(json.Number).String() != "1001" ||
+		body["Buy1"].(map[string]any)["Price"].(json.Number).String() != "1001" {
+		t.Errorf("板フィールド = %#v, 上流JSONの生の値を期待", body)
 	}
 }
 
@@ -502,12 +681,31 @@ func TestClientFetchHonorsCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := client.Fetch(ctx, "market_data", "")
+	_, err := client.Fetch(ctx, "market_data", nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Fetch() error = %v, context.Canceledを期待", err)
 	}
 	if requests.Load() != 0 {
 		t.Errorf("キャンセル済み要求のHTTP到達回数 = %d, 0を期待", requests.Load())
+	}
+}
+
+// ----------------------------------------
+
+// TestResponseSourceURLRemovesQueryFromFallback は、fallback取得元の公開範囲を検証します。
+//
+// 主な特徴:
+//   - HTTP応答に最終要求URLがない場合もquery、fragment、userinfoを除去する
+//
+// 引数:
+//   - t *testing.T: テスト状態を管理する値
+//
+// 返り値:
+//   - なし
+func TestResponseSourceURLRemovesQueryFromFallback(t *testing.T) {
+	actual := responseSourceURL(nil, "http://user:pass@example.test/kabusapi/ranking?Type=2#fragment")
+	if actual != "http://example.test/kabusapi/ranking" {
+		t.Errorf("responseSourceURL() = %q, query等を除いたURLを期待", actual)
 	}
 }
 

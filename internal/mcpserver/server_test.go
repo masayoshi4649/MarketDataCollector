@@ -118,6 +118,7 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 		t.Errorf("datalistの説明 = %q, 最初に呼び出す案内を期待", toolsByName["datalist"].Description)
 	}
 	for _, expected := range []string{
+		"監視・登録一覧を変更する場合",
 		"未確認の場合は先にdatalist",
 		"全providerを比較",
 		"掲載順、dataset件数を優先度として特定providerを既定選択しない",
@@ -130,10 +131,15 @@ func TestServerExposesSharedDataListAndCollectTools(t *testing.T) {
 	}
 	assertToolInputSchemaDescription(t, toolsByName["collect"], "provider", "datalistで全候補を比較")
 	assertToolInputSchemaDescription(t, toolsByName["collect"], "dataset", "datalistで選択したprovider")
+	if toolsByName["datalist"].Annotations == nil || !toolsByName["datalist"].Annotations.ReadOnlyHint {
+		t.Errorf("datalist注釈 = %+v, 読み取り専用を期待", toolsByName["datalist"].Annotations)
+	}
+	if toolsByName["collect"].Annotations == nil || toolsByName["collect"].Annotations.ReadOnlyHint {
+		t.Errorf("collect注釈 = %+v, providerにより外部登録を変更し得る注釈を期待", toolsByName["collect"].Annotations)
+	}
 	for _, tool := range tools.Tools {
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint ||
-			tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
-			t.Errorf("tool注釈 = %+v, 読み取り専用・非破壊を期待", tool.Annotations)
+		if tool.Annotations == nil || tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint {
+			t.Errorf("tool注釈 = %+v, 非破壊を期待", tool.Annotations)
 		}
 	}
 	assertToolOutputSchema(t, toolsByName["datalist"], "version", "providers")

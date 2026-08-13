@@ -95,7 +95,7 @@ BulkとTDnetのダウンロード系datasetは、J-Quantsが発行した署名�
 
 ## `kabus-controller`
 
-KabusControllerの既定オリジン `http://10.10.100.1:8080` へ直接接続し、登録中の先物・オプション一覧と板情報を取得するGoネイティブproviderである。APIキー、Python、外部SDKは使わず、固定許可した6つの `GET` に限定する。登録変更、発注、取消などの更新操作は実装しない。
+KabusControllerの既定オリジン `http://10.10.100.1:8080` へ直接接続し、登録中の先物・オプション、任意板、ランキング、規制、コード解決、銘柄・為替情報等を取得するGoネイティブproviderである。APIキー、Python、外部SDKは使わず、固定許可したGETに限定する。発注、取消、登録解除などの更新APIは実装しないが、kabuステーションの銘柄指定情報GETにはAPI銘柄を自動登録する副作用がある。
 
 | dataset | 取得内容 | 上流通信 |
 | ------- | -------- | -------- |
@@ -105,10 +105,24 @@ KabusControllerの既定オリジン `http://10.10.100.1:8080` へ直接接続�
 | `future_market_data` | 登録中の先物だけの板情報 | `GET /api/trade/market-data/future` |
 | `option_market_data` | 登録中のオプションだけの板情報 | `GET /api/trade/market-data/option` |
 | `symbol_market_data` | 指定銘柄1件の板情報 | `GET /api/trade/market-data/:symbol` |
+| `kabus_ranking` | 詳細ランキング | `GET /kabusapi/ranking` |
+| `kabus_regulations` | 規制・空売り規制 | `GET /kabusapi/regulations/:symbol@:exchange` |
+| `derivative_symbol_resolver` | 先物・OP・限週OPコード解決 | `GET /kabusapi/symbolname/*` |
+| `nt_pair_symbol_resolver` | TOPIX miniと日経mini/microの同限月コード | コード解決2 GETを合成 |
+| `arbitrary_board_snapshot` | 任意の株式・先物・OP板 | `GET /kabusapi/board/:symbol@:exchange` |
+| `option_chain_snapshot` | 登録済みOPのCall/Put板 | 登録一覧と板の2 GETを合成 |
+| `kabus_symbol_info` | 銘柄基本・追加情報 | `GET /kabusapi/symbol/:symbol@:exchange` |
+| `kabus_primary_exchange` | 株式の優先市場 | `GET /kabusapi/primaryexchange/:symbol` |
+| `kabus_fx_snapshot` | 為替スナップショット | `GET /kabusapi/exchange/:pair` |
+| `kabus_margin_premium` | 信用プレミアム料 | `GET /kabusapi/margin/marginpremium/:symbol` |
+| `kabus_api_soft_limits` | 1注文のソフトリミット | `GET /kabusapi/apisoftlimit` |
+| `kabus_api_capacity` | controller既知登録数と残枠上限 | ソフトリミット・先物登録・OP登録を合成 |
 
-`symbol_market_data` だけ `symbol` が必須で、先物とオプションのどちらにも使用できる。入力から任意URLや任意pathを選ぶ機能は提供しない。1回の `collect` は1 GETであり、HTTPリダイレクト、複数応答の結合、自動再試行、保存は行わない。`enabled=true` でも起動時と `datalist` では接続せず、収集時だけ上流へ接続する。
+入力から任意URLや任意pathを選ぶ機能は提供しない。単一endpoint datasetは1 GET、NTペアと登録済みOPチェーンは2 GET、登録容量は3 GETを全て成功させてから合成する。HTTPリダイレクト、自動再試行、保存、自動登録解除は行わない。`enabled=true` でも起動時と `datalist` では接続せず、収集時だけ上流へ接続する。
 
 既定接続先はLAN内の平文HTTPである。KabusControllerとMarketDataCollectorの両方についてネットワーク到達範囲を制限し、取得データの利用条件を確認する。設定、metadata、応答境界を含む詳細は [kabus-controller対応状況](kabus-controller.md) を参照する。
+
+任意板GETの登録枠予約・自動解除は実装しない。異なるsymbolへの反復要求はAPI登録上限を消費し得るため、明示的な少数銘柄に限定する。
 
 ## `polymarket`
 

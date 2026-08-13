@@ -86,11 +86,11 @@ output schemaには `version`、`provider`、`dataset`、`collected_at`、`metad
 
 J-QuantsのページングとcursorもRESTと同じである。1回の `collect` は上流の1ページだけを取得し、返却された `pagination_key` または `cursor` はprovider固有 `data` 内に保持する。後続ページまたは差分は、同じ検索条件と返却キーを次の `collect` へ渡して取得する。
 
-kabus-controllerもRESTと同じ6つの固定GETだけを公開する。1回の `collect` はKabusControllerへ1回だけ要求し、上流JSONをキー変換せず `data` に保持する。個別板情報の `symbol_market_data` だけ `symbol` が必須であり、任意URLや更新操作は受け付けない。
+kabus-controllerもRESTと同じ18 datasetを公開する。単一endpointは上流JSONを保持し、NT同限月ペアと登録済みOPチェーンは2 GET、登録容量は3 GETを合成する。任意URLや更新endpointは受け付けないが、kabuステーションの銘柄指定情報GETはAPI登録銘柄リストを変更し得るため、dataset説明とmetadataで副作用を確認する。
 
 PolymarketのページングもRESTと同じである。1回の `collect` は1回の公開GETと1ページだけを取得する。検索は `page`、Gammaは応答の `next_cursor` を次回の `after_cursor` へ、CLOBは応答の `next_cursor` を同名の次回入力へ、Dataは `offset` を進めて継続し、tool側では自動追跡・結合しない。ページング対象のmetadataは `total_pages_known` を常に返し、総ページ数の実値は上流が提供する場合だけ返す。
 
-tool annotationは読み取り専用、非破壊、外部接続ありとして公開する。要求時の市場データは時間により変わるため、idempotent hintはfalseとする。
+`datalist` のtool annotationは読み取り専用とする。`collect` は非破壊・外部接続ありだが、一部の情報GETが外部のAPI銘柄登録を変更し得るためread-only hintはfalseとする。要求時の市場データは時間により変わるため、idempotent hintもfalseとする。
 
 ## エラー
 

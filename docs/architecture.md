@@ -23,7 +23,7 @@ MCP collect        ─┘                                          ├─> Kabus
 - `internal/provider/nikkei225jp`: 225225.jpの同一ホストHTTP、本文上限、厳格パーサー
 - `internal/provider/nikkei225`: 225225.jpの13データセットを共通契約へ変換し、ローカル絞り込みを適用
 - `internal/provider/jquants`: J-Quants API v2の固定endpoint、プラン・アドオン別catalog、APIキー送信、Gzip展開、本文上限を管理するGoネイティブprovider
-- `internal/provider/kabuscontroller`: KabusControllerの固定6 GET、入力検証、JSON数値精度、本文上限を管理するGoネイティブprovider
+- `internal/provider/kabuscontroller`: KabusControllerの固定許可GET、入力検証、3種類の安全な合成取得、副作用・鮮度metadata、JSON数値精度、本文上限を管理するGoネイティブprovider
 - `internal/provider/polymarket`: Polymarketの公開Gamma/CLOB/Data APIの固定GET、入力検証、JSON正規化、本文上限、単一FIFOとquotaを管理するGoネイティブprovider
 - `internal/provider/python`: 子プロセスの期限、標準出力上限、厳密JSONを管理
 - `python/collector.py`: yfinanceとinvestpyの許可済み関数だけを呼び、Python固有値をJSONへ正規化
@@ -93,16 +93,17 @@ J-QuantsはPython adapterを経由せず、GoのHTTPクライアントからJ-Qu
 
 ## KabusControllerの取得境界
 
-kabus-controllerはPython adapterを経由せず、GoのHTTPクライアントから既定オリジン `http://10.10.100.1:8080` へ直接接続する。認証情報を扱わず、先物・オプション登録一覧、全体・種類別・指定銘柄の板情報に対応する固定6 GETだけをregistryへ登録する。詳細は [kabus-controller対応状況](kabus-controller.md) に集約する。
+kabus-controllerはPython adapterを経由せず、GoのHTTPクライアントから既定オリジン `http://10.10.100.1:8080` へ直接接続する。認証情報を扱わず、先物・オプション登録一覧、板、ランキング、規制、コード解決、銘柄・為替情報等に対応する固定許可GETだけをregistryへ登録する。詳細は [kabus-controller対応状況](kabus-controller.md) に集約する。
 
 - `enabled=true` でも起動時と `datalist` では接続せず、`collect` 時だけ上流へ接続する。上流応答を保存しない。
-- 1回の `collect` につき上流GETを1回だけ実行する。任意URL、複数応答の合成、定期収集、自動再試行は行わない。
-- HTTPリダイレクトを追跡せず、固定6 GET以外への後続要求を防ぐ。
-- `symbol_market_data` だけ `symbol` を必須とし、他の5 datasetは固有入力を持たない。
+- 単一endpoint datasetは1 GET、NT同限月ペアと登録済みOPチェーンは2 GET、登録容量は3 GETを全成功後に合成する。任意URL、定期収集、自動再試行は行わない。
+- HTTPリダイレクトを追跡せず、固定許可したpathとquery以外への後続要求を防ぐ。
+- dataset別に型、列挙、範囲、条件付き必須、path用銘柄形式を通信前に検証する。
+- 標準info APIの流量制御はKabusController側へ委ね、MarketDataCollectorでは追加待機や直列化を行わない。銘柄指定GETはAPI登録銘柄リストを変更し得るためmetadataへ明示し、自動解除しない。
 - `Accept: application/json` と `Accept-Encoding: gzip` を送り、JSONまたは `+json` のContent-Typeだけを成功応答として受け付ける。
 - 上流JSON全体をキー変換せず `data` へ格納し、`json.Decoder.UseNumber` で数値精度を保持する。
 - `max_response_bytes` を未圧縮本文、Gzip圧縮本文、Gzip展開後本文へ適用する。既定は16 MiB、設定範囲は1～64 MiBである。
-- 登録変更、発注、取消などの更新操作は呼び出さない。
+- 発注、取消、登録解除などの更新endpointは呼び出さない。標準info GET自体の自動登録副作用は純粋な読み取りと区別する。
 
 ## Polymarketの取得境界
 

@@ -70,7 +70,7 @@ max_response_bytes = 16777216
 
 ### 2.2 kabus-controllerを利用する場合
 
-kabus-controller providerは同梱設定で `enabled=true` です。既定ではLAN内の `http://10.10.100.1:8080` へ接続します。APIキー、Python、Node.js、追加パッケージは不要です。`enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ通信します。
+kabus-controller providerは同梱設定で `enabled=true` です。既定ではLAN内の `http://10.10.100.1:8080` へ接続します。APIキー、Python、Node.js、追加パッケージは不要です。`enabled=true` でも起動時と `datalist` では上流通信せず、`collect` 時だけ通信します。銘柄指定の標準情報GETはAPI登録銘柄リストを変更し得ます。
 
 KabusControllerのアドレスが異なる場合、または通信期限・本文上限を変更する場合は、`conf/zz-kabus-controller.local.toml` などへ次を記載します。
 
@@ -83,7 +83,7 @@ user_agent = "MarketDataCollector/0.1"
 max_response_bytes = 16777216
 ```
 
-1回の `collect` は固定6 GETのいずれか1件だけを実行し、上流応答を保存しません。先物・オプション登録一覧、全体・種類別・指定銘柄の板情報を取得できます。個別銘柄の `symbol_market_data` だけ `symbol` が必須です。6 datasetと固定パスは [kabus-controller対応状況](kabus-controller.md) を確認してください。
+18 datasetで、先物・オプション登録一覧と板、詳細ランキング、規制、コード解決、NT同限月ペア、任意板、登録済みOPチェーン、銘柄・為替情報、信用プレミアム料、注文ソフトリミット、controller既知登録数を取得できます。単一endpointは1 GET、NTペアとOPチェーンは2 GET、登録容量は3 GETを全成功後に合成し、応答は保存しません。入力と固定パスは [kabus-controller対応状況](kabus-controller.md) を確認してください。
 
 既定接続先は平文HTTPです。KabusControllerの8080番ポートをインターネットへ公開せず、信頼できるLANまたはVPN内に通信経路を限定してください。KabusControllerへの疎通は起動や `datalist` だけでは確認できないため、構築後に必要なdatasetの `collect` も実行します。
 
@@ -349,7 +349,7 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/api/datalist
 ```
 
-`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば起動確認は完了です。現在の同梱設定を変更していなければ、`225225jp`、`kabus-controller`、`polymarket`、`yfinance`、`investingpy` の5件が掲載され、`kabus-controller` 内には6 dataset、`polymarket` 内には37 datasetがあります。Git管理外のローカル設定で `jquants` も有効化した場合は、6 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はKabusControllerへの疎通やPythonパッケージのimportまでは行いません。KabusController側は実際の `collect`、Python側は前述の `pip check` とimport確認も実施してください。
+`healthz` が `{"status":"ok"}` を返し、`datalist` に `enabled=true` としたproviderだけが掲載されれば起動確認は完了です。現在の同梱設定を変更していなければ、`225225jp`、`kabus-controller`、`polymarket`、`yfinance`、`investingpy` の5件が掲載され、`kabus-controller` 内には18 dataset、`polymarket` 内には37 datasetがあります。Git管理外のローカル設定で `jquants` も有効化した場合は、6 providerが掲載され、Standardプラン、アドオンなしでは `jquants` 内に19 datasetが掲載されます。ただし `datalist` はKabusControllerへの疎通やPythonパッケージのimportまでは行いません。KabusController側は実際の `collect`、Python側は前述の `pip check` とimport確認も実施してください。
 
 既定の待受は全ネットワークインターフェースのTCP 8080番です。到達範囲はOSまたはネットワーク側のファイアウォールで調整してください。
 

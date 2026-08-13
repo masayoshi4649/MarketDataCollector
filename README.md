@@ -6,7 +6,7 @@
 
 - `225225jp`: 225225.jp の現在値、チャート、日経225構成銘柄、ランキングなど13データセット
 - `jquants`: J-Quants API v2を直接利用するGoネイティブprovider。契約プランとアドオンに応じて利用可能なdatasetを公開
-- `kabus-controller`: LAN内のKabusControllerから先物・オプション登録一覧と板情報を取得する、認証不要・読取専用のGoネイティブprovider。6データセット
+- `kabus-controller`: LAN内のKabusControllerとkabuステーション互換APIから、板、ランキング、規制、銘柄情報等を取得する認証不要のGoネイティブprovider。18データセット
 - `polymarket`: Polymarketの公開Gamma/CLOB/Data APIを認証なしで直接利用する、読取専用のGoネイティブprovider。37データセット
 - `yfinance`: 価格、企業行動、財務、分析、保有者、オプション、ニュース、検索など10データセット
 - `investingpy`: 外部識別子は要件に合わせてこの名前を使い、Pythonでは非公式OSS `investpy==1.0.8` の情報取得機能を利用
@@ -47,7 +47,7 @@ Python依存の固定版はCPython 3.14 / Windowsで検証しています。現�
 
 J-Quants providerは既定で無効です。利用する場合は、実際のAPIキーをGit管理外の `conf/*.local.toml` だけに保存してから有効化します。
 
-kabus-controller providerも既定で有効です。KabusControllerの固定6 GETだけを呼び、登録変更や発注などの更新操作は行いません。起動時と `datalist` ではKabusControllerへ接続しないため、疎通は実際の `collect` で確認します。
+kabus-controller providerも既定で有効です。固定許可したGETだけを呼び、発注、取消、登録解除などの更新APIは呼びません。ただしkabuステーションの銘柄指定情報GETは、指定銘柄をAPI登録銘柄リストへ自動登録し得ます。起動時と `datalist` では接続しないため、疎通は実際の `collect` で確認します。
 
 Polymarket providerは既定で有効です。Gamma/CLOB/Dataの公開GETだけを呼び、注文、キャンセル、入出金などの更新操作は行いません。
 
@@ -294,9 +294,9 @@ user_agent = "MarketDataCollector/0.1"
 max_response_bytes = 16777216
 ```
 
-公開する6 datasetは、先物登録一覧 `future_registrations`、オプション登録一覧 `option_registrations`、全板情報 `market_data`、先物板情報 `future_market_data`、オプション板情報 `option_market_data`、指定銘柄の板情報 `symbol_market_data` です。最後のdatasetだけ `symbol` が必須です。すべて固定GETで、1回の `collect` はKabusControllerへ1回だけ要求します。詳細な対応パスと取得契約は [kabus-controller対応状況](docs/kabus-controller.md) を参照してください。
+公開する18 datasetは、従来の登録一覧・登録板6件に加え、詳細ランキング、規制、派生商品コード解決、NT同限月ペア、任意板、登録済みOPチェーン、銘柄情報、優先市場、為替、信用プレミアム料、注文ソフトリミット、controller既知登録数から求める残枠上限を扱います。通常は1 GET、NTペアとOPチェーンは2 GET、登録容量は3 GETを全て成功させてから合成します。OPチェーンは選択脚の気配・出来高・時刻の利用可否と登録一覧の基準時刻を返し、登録容量は重複を除いた既知symbol数から残枠上限を計算します。入力、固定パス、鮮度metadata、登録副作用は [kabus-controller対応状況](docs/kabus-controller.md) を参照してください。
 
-既定の `base_url` はLAN内の平文HTTPです。KabusControllerを信頼できないネットワークへ公開せず、アドレスが異なる環境では `conf/zz-kabus-controller.local.toml` など後順位のローカル設定でオリジンだけを上書きしてください。上流へは認証情報を送らず、登録変更や発注などの取引操作も行いません。
+既定の `base_url` はLAN内の平文HTTPです。KabusControllerを信頼できないネットワークへ公開せず、アドレスが異なる環境では `conf/zz-kabus-controller.local.toml` など後順位のローカル設定でオリジンだけを上書きしてください。上流へ `X-API-KEY` 等の認証情報を送らず取引操作も行いませんが、銘柄指定GETによるAPI銘柄登録は起こり得ます。既存登録を保護するため自動解除はしません。
 
 ## Polymarket provider
 
@@ -333,7 +333,7 @@ max_response_bytes = 16777216
 
 - 225225.jpは公開REST APIではなく、画面用の内部JavaScript/JSONを参照します。URLと形式は予告なく変更される可能性があります。
 - J-Quants APIのAPIキーを公開応答やログに含めないでください。取得データを第三者が閲覧できる形で公開する前に、J-Quantsの契約とデータ利用条件を確認してください。
-- kabus-controller providerはKabusControllerの固定GETだけを読み取ります。既定の平文HTTP接続先とKabusController自体をLAN外へ公開せず、取得した先物・オプション情報の利用条件を運用者が確認してください。
+- kabus-controller providerは固定許可したGETだけを実行します。銘柄指定情報GETはAPI登録銘柄リストを変更し得るため、既定の平文HTTP接続先とKabusController自体をLAN外へ公開せず、取得情報の利用条件を運用者が確認してください。
 - Polymarket providerは公開情報だけを読み取りますが、公開ウォレットの情報、予測市場データ、利用地域にはPolymarketの規約と地域制限が適用されます。注文・キャンセル・入出金・認証付きAPIは実装していません。
 - yfinanceはYahoo公式SDKではありません。yfinance自身が研究・教育および個人利用に関する注意を示しています。一般公開、組織共有、商用利用の前にYahooとデータ権利者の条件を確認してください。
 - `investingpy` というPyPIパッケージは使用しません。外部識別子だけを `investingpy` とし、非公式OSS `investpy==1.0.8` を使います。investpyプロジェクト自身も、Investing.com側の変更により正常動作しない旨を警告しているため、動作は保証されません。
@@ -370,7 +370,7 @@ go test ./internal/provider/nikkei225jp -run Live -v
 ├── conf/                         TOML設定とサンプル
 ├── docs/                         設計、API、MCP、provider仕様
 │   ├── jquants.md                J-Quants API v2対応状況
-│   ├── kabus-controller.md       KabusController固定GET対応状況
+│   ├── kabus-controller.md       KabusController固定GET・合成dataset対応状況
 │   ├── polymarket.md             Polymarket公開API対応状況
 │   └── setup-guide.md            構築、配置、Python依存の手順書
 ├── dist/                         OS・CPU別の配布物

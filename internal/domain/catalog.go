@@ -17,6 +17,8 @@ type ParameterDescriptor struct {
 	Description string   `json:"description" jsonschema:"入力項目の説明です。"`
 	Allowed     []string `json:"allowed,omitempty" jsonschema:"指定可能な値が限定される場合の候補です。"`
 	Default     any      `json:"default,omitempty" jsonschema:"省略時の既定値です。"`
+	Minimum     *float64 `json:"minimum,omitempty" jsonschema:"数値入力で許可する最小値です。"`
+	Maximum     *float64 `json:"maximum,omitempty" jsonschema:"数値入力で許可する最大値です。"`
 }
 
 // DatasetDescriptor は、収集可能な1種類の情報と入力仕様を表します。

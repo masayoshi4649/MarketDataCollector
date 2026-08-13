@@ -94,6 +94,7 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	)
 
 	readOnly := true
+	collectReadOnly := false
 	notDestructive := false
 	openWorld := true
 	mcp.AddTool(protocolServer, &mcp.Tool{
@@ -112,13 +113,14 @@ func New(service Service, maxRequestBytes int64, logger *slog.Logger) (*Server, 
 	mcp.AddTool(protocolServer, &mcp.Tool{
 		Name: collectToolName,
 		Description: "providerとdatasetを指定し、要求時に市場情報を収集して返します。" +
+			"一部のproviderでは、取得用GETが外部サービスの監視・登録一覧を変更する場合があるため、datalistのdataset説明とmetadataを確認してください。" +
 			"この会話で現在の一覧を未確認の場合は先にdatalistを呼び、設定上有効な全providerを比較してから、掲載された識別子と入力項目を指定してください。" +
 			"ユーザーがproviderを指定していない場合、一般知識、掲載順、dataset件数を優先度として特定providerを既定選択しないでください。" +
 			"RESTのPOST /api/collectと同じ入力・出力です。\n\n設定上有効なデータソース概要:\n" + dataSourceSummary,
 		OutputSchema: collectOutputSchema,
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "市場データ収集",
-			ReadOnlyHint:    readOnly,
+			ReadOnlyHint:    collectReadOnly,
 			DestructiveHint: &notDestructive,
 			IdempotentHint:  false,
 			OpenWorldHint:   &openWorld,

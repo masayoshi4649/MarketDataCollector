@@ -78,7 +78,7 @@ max_response_bytes = 16777216
 
 [providers.kabus-controller]
 # kabus-controller providerへの収集要求を許可する真偽値です。単位はなく、trueまたはfalseを指定します。
-# 認証不要の読取専用APIを追加runtimeなしで利用できるため既定ではtrueです。trueでも通信はcollect時だけ行います。
+# 認証不要かつ追加runtimeなしで利用できるため既定ではtrueです。trueでも通信はcollect時だけ行います。銘柄指定情報GETはAPI銘柄を自動登録し得ます。
 enabled = true
 # kabus-controllerの固定APIパスを解決するHTTPオリジンです。単位はなく、http/httpsの絶対URLだけを許可し、userinfo、パス、クエリ、フラグメントは指定できません。
 # 現在のLAN内エンドポイントを利用するため、既定値はhttp://10.10.100.1:8080です。
@@ -90,7 +90,7 @@ timeout = "15s"
 # 取得先のアクセスログで本アプリケーションからの通信を識別できるよう、製品名と版を指定します。
 user_agent = "MarketDataCollector/0.1"
 # kabus-controllerの未圧縮本文、Gzip圧縮本文、展開後本文として読み取る最大サイズです。単位はバイトで、1048576～67108864を指定します。
-# 16777216バイト（16MiB）は先物・オプションの一覧と板情報を許可しつつ、圧縮前後の応答バッファの肥大化を制限します。
+# 16777216バイト（16MiB）は登録一覧、板、ランキング等を許可しつつ、圧縮前後の応答バッファの肥大化を制限します。
 max_response_bytes = 16777216
 
 [providers.polymarket]

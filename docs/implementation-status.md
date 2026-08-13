@@ -18,7 +18,7 @@
 - [x] J-Quantsの1要求1ページ継続、当日差分cursor、Gzip圧縮前後の本文上限、HTTP状態、JSON整数精度を安全に扱う
 - [x] 全J-Quants要求共通の単一FIFOとAPI区分別独立quotaにより、受付順を保って公式上限の50%に抑える
 - [x] J-Quantsの同一originリダイレクトではAPIキーを維持し、異なるoriginではAPIキーだけを除去する
-- [x] kabus-controllerの先物・オプション登録一覧と板情報を、認証・Pythonなしの固定6 GETで要求時に取得できる
+- [x] kabus-controllerの登録一覧、板、ランキング、規制、コード解決、銘柄・為替情報等18 datasetを、認証・Pythonなしで要求時に取得できる
 - [x] kabus-controllerのraw JSON、UseNumber、Gzip圧縮前後の本文上限、HTTP状態分類を安全に扱う
 - [x] Polymarketの公開Gamma/CLOB/Data APIを認証・Pythonなしで要求時に取得できる
 - [x] 事前検証PJの基礎10 datasetを移植し、公開読取専用27 datasetを追加した合計37 datasetを固定許可リストとして実装する
@@ -61,8 +61,8 @@
 16. 全J-Quants要求で共有する単一FIFOキューと、基本・財務・株価分足／ティック・TDnetの独立quotaを設け、受付順を保って公式レート上限の50%で要求開始を均等化する。
 17. HTTPリダイレクトは通常どおり追跡し、同一originでは `x-api-key` を維持し、異なるoriginでは同ヘッダーだけを除去する。
 18. 通信診断はAPIキーの完全一致だけを伏せ、URLやquery等を保持する。`max_response_bytes` はGzip圧縮本文と展開後本文の双方に適用する。
-19. kabus-controllerはKabusControllerの固定6 GETだけをGoから直接呼び、認証情報、取引操作、Python依存を持たせない。
-20. kabus-controllerは上流JSONをキー変換せず返し、`UseNumber`、MIME検証、Gzip圧縮前後の本文上限、HTTP状態分類を適用する。
+19. kabus-controllerは固定許可したGETだけをGoから直接呼び、認証情報、取引操作、Python依存を持たせない。銘柄指定情報GETの自動登録副作用はmetadataとMCP annotationへ反映し、自動解除しない。
+20. kabus-controllerは単一endpointの上流JSONを保持し、NT同限月ペア、登録済みOPチェーン、controller既知登録容量だけ全取得後に合成する。`UseNumber`、MIME検証、Gzip圧縮前後の本文上限、HTTP状態分類を適用する。
 21. Polymarketは公式の公開3 APIだけをGoから直接呼び、認証情報とPython依存を持たせない。
 22. Polymarketの各datasetは入力から固定GETを1つだけ選び、応答合成やページ自動追跡をしない。上流が提供しない総ページ数、総件数、`has_more` を推測しない。
 23. Polymarketの全要求を単一FIFOへ直列化し、dataset別の公式quotaの50%以下で開始する。429は呼び出し側へ返し、自動再試行しない。
@@ -89,17 +89,23 @@
 
 ## kabus-controllerの実装基準
 
-- 実装済みdataset: 6件
+- 実装済みdataset: 18件
 - 既定オリジン: `http://10.10.100.1:8080`
-- 認証: 不要。API key、Python、外部SDKを使用しない
-- 更新操作: 0件。登録一覧と板情報の固定GETだけを実装
-- 上流要求: 1 collectにつき1 GET。複数endpointを合成しない
-- 入力: `symbol_market_data` の `symbol` だけ必須。他の5 datasetは固有入力なし
-- JSON: 上流キーを変換せず `data` へ格納し、`json.Decoder.UseNumber` で数値精度を保持
+- 認証: 不要。`X-API-KEY`、`Authorization`、Cookie、Python、外部SDKを使用しない
+- 明示的な更新操作: 0件。固定許可GETだけを実装するが、銘柄指定情報GETには上流仕様によるAPI銘柄の自動登録副作用がある
+- 上流要求: 通常datasetは1 GET、NT同限月ペアと登録済みOPチェーンは2 GET、登録容量は3 GETを全成功後に合成
+- 入力: `datalist` に型、必須条件、列挙値、既定値を公開し、固定path・固定query・resolver種別間の条件を通信前に検証
+- JSON: 単一endpointは上流キーを変換せず `data` へ格納し、複合datasetだけ監査情報と品質フラグを付けて合成する。`json.Decoder.UseNumber` で数値精度を保持
+- 標準情報APIの流量: KabusController側の実装へ委ね、MarketDataCollectorでは追加待機・直列化を行わない
+- OPチェーン品質: 買い・売り気配を個別表示し、出来高は正数・ゼロ・不正・欠損、価格時刻はRFC3339・不正・欠損を分離。鮮度は選択されたCall/Putだけから算出
+- 登録一覧監査: `status`、`state`、`updated_at` をOPチェーンと登録容量へ保持し、存在する不成功状態は合成前に拒否
+- 登録容量: `50 - unique symbol件数` を残枠上限とし、生件数、重複件数、symbol欠損件数を別表示。株式、PUSH、他clientが不明なため確定残枠にはしない
 - 本文上限: 既定16 MiB、設定範囲1～64 MiB。未圧縮・Gzip圧縮・展開後本文へ適用
 - 状態分類: 400・422は `INVALID_ARGUMENT`、個別銘柄の404は `NOT_FOUND`、401・403・425・429・503は `PROVIDER_UNAVAILABLE`、408・504は `TIMEOUT`、その他の非2xxは `UPSTREAM_ERROR`
 
-6 datasetの固定パス、metadata、設定、ネットワーク上の注意は [kabus-controller対応状況](kabus-controller.md) に記載する。
+18 datasetの固定パス、metadata、登録副作用、設定、ネットワーク上の注意は [kabus-controller対応状況](kabus-controller.md) に記載する。
+
+`arbitrary_board_snapshot` の登録枠予約、自動解除、失敗時清掃は、既存登録の所有権を判別できないため未実装である。現段階では明示的に許可された少数銘柄の取得に限定し、無制限な反復走査には使用しない。
 
 ## Polymarket公開APIの実装基準
 
@@ -131,7 +137,7 @@
 5. Python adapterの外部通信なしunittest
 6. ルート実行パッケージのbuild
 
-Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類、kabus-controllerの固定6 GET・symbol入力・UseNumber・MIME・本文上限・状態分類、およびPolymarketの37 dataset・固定GET・入力分岐・ページング・UseNumber正規化・本文上限・FIFO順序・50%レート・状態分類のテストを含む。
+Goテストには、設定、共通service、REST、公式MCPクライアント結合、共通HTTP境界、Python Go境界、225225.jpパーサーとHTTPクライアント、J-Quantsの固定endpoint・入力・認証・ページング・cursor・FIFO順序・50%レート・リダイレクト別キー転送・Gzip圧縮前後の本文上限・状態分類、kabus-controllerの18 dataset・path/query許可リスト・条件入力・副作用metadata・複数GET合成・UseNumber・MIME・本文上限・状態分類、およびPolymarketの37 dataset・固定GET・入力分岐・ページング・UseNumber正規化・本文上限・FIFO順序・50%レート・状態分類のテストを含む。
 
 Pythonテストは偽yfinance/investpyモジュールを注入し、許可リスト、入力検証、pandas/NumPy相当値、日時、NaN、循環参照、標準入出力を検証する。
 
@@ -141,7 +147,7 @@ Pythonテストは偽yfinance/investpyモジュールを注入し、許可リス
 
 J-Quantsは通常テストで外部接続せず、明示的な実API疎通だけをローカルで実行する。通常CIでは実行しない。
 
-kabus-controllerも通常テストで外部接続せず、偽HTTPサーバーで固定6 GETと応答境界を検証する。既定の `10.10.100.1:8080` への実疎通は、KabusControllerが稼働するLAN内で明示的に行う。
+kabus-controllerも通常テストで外部接続せず、偽HTTPサーバーで固定path/query、認証ヘッダー不送信、合成処理と応答境界を検証する。既定の `10.10.100.1:8080` への実疎通は、KabusControllerが稼働するLAN内で明示的に行う。
 
 Polymarketも通常テストで外部接続しない。2026年8月8日の仕様確認では、特にCLOB `/price` の `BUY` / `SELL` を明示的な実API疎通で確認した。継続的なlive testは通常CIで実行しない。
 

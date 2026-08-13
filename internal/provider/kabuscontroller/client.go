@@ -18,11 +18,14 @@ import (
 	"unicode/utf8"
 )
 
-var symbolPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var (
+	symbolPattern       = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	pathSelectorPattern = regexp.MustCompile(`^[A-Za-z0-9._@-]+$`)
+)
 
 // APIClient は、固定したKabusController endpointからJSONを取得する契約です。
 type APIClient interface {
-	Fetch(context.Context, string, string) (APIResponse, error)
+	Fetch(context.Context, string, map[string]string) (APIResponse, error)
 }
 
 // ClientConfig は、KabusController API clientの接続条件を保持します。
@@ -88,7 +91,7 @@ NewClient は、KabusController API clientを生成します。
   - 接続オリジン、User-Agent、本文上限を検証する
   - datasetと固定pathの重複や形式を起動時に検証する
   - 呼び出し元のHTTP clientを複製して共有設定の書き換えを防ぐ
-  - HTTPリダイレクトを追跡せず固定6 GETの接続境界を維持する
+  - HTTPリダイレクトを追跡せず固定GETの接続境界を維持する
 
 引数:
   - config ClientConfig: 接続先、HTTP client、識別値、JSON本文上限
@@ -128,6 +131,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 		cloned := *config.HTTPClient
 		httpClient = &cloned
 	}
+	httpClient.Jar = nil
 	httpClient.CheckRedirect = rejectRedirect
 
 	return &Client{
@@ -167,45 +171,35 @@ Fetch は、datasetに対応する固定endpointからJSONを1件取得します
 
 機能:
   - datasetを固定許可リストへ再照合する
-  - 個別銘柄以外は固定パス、個別銘柄は検証済みsymbolを1 path segmentとして使用する
+  - endpoint種別に応じて固定パス、検証済みpath selector、固定query名から要求URLを生成する
   - GET要求へUser-AgentとJSONのAcceptを設定する
   - JSON MIME、本文上限、UTF-8、余分なJSON値を検証し、数値をjson.Numberで保持する
 
 引数:
   - ctx context.Context: HTTP要求の期限とキャンセルを伝えるコンテキスト
   - dataset string: endpointSpecsに存在するdataset識別子
-  - symbol string: symbol_market_dataで取得する銘柄コード。その他のdatasetでは空文字
+  - parameters map[string]string: collectorが検証・正規化したdataset固有入力
 
 返り値:
   - APIResponse: JSON本文、HTTP状態、取得元URL、取得時刻、本文サイズ
-  - error: dataset、symbol、要求作成、通信、HTTP状態、本文、MIME、JSONのエラー
+  - error: dataset、parameters、要求作成、通信、HTTP状態、本文、MIME、JSONのエラー
 */
 func (c *Client) Fetch(
 	ctx context.Context,
 	dataset string,
-	symbol string,
+	parameters map[string]string,
 ) (APIResponse, error) {
 	spec, exists := c.endpoints[dataset]
 	if !exists {
 		return APIResponse{}, fmt.Errorf("未対応のKabusController datasetです: %q", dataset)
 	}
-	if spec.RequiresSymbol {
-		if err := validateSymbol(symbol); err != nil {
-			return APIResponse{}, err
-		}
-	} else if symbol != "" {
-		return APIResponse{}, fmt.Errorf("KabusController dataset %qにはsymbolを指定できません", dataset)
+	if spec.Kind == kindComposite {
+		return APIResponse{}, fmt.Errorf("KabusController dataset %qは複合datasetのため直接Fetchできません", dataset)
 	}
-
-	requestURL := c.baseURL
-	endpointPath := spec.Path
-	if spec.RequiresSymbol {
-		endpointPath = strings.TrimSuffix(endpointPath, "/:symbol") + "/" + url.PathEscape(symbol)
+	requestURL, err := c.buildRequestURL(spec, parameters)
+	if err != nil {
+		return APIResponse{}, err
 	}
-	requestURL.Path = endpointPath
-	requestURL.RawPath = ""
-	requestURL.RawQuery = ""
-	requestURL.Fragment = ""
 	sourceURL := requestURL.String()
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
@@ -256,6 +250,346 @@ func (c *Client) Fetch(
 // ----------------------------------------
 
 /*
+buildRequestURL は、検証済み入力から固定許可済みURLを生成します。
+
+機能:
+  - datasetのroute種別ごとにpath selectorとqueryを組み立てる
+  - endpoint仕様にない入力、欠落、path注入、query注入をHTTP通信前に拒否する
+  - resolverのkindに応じて固定pathと上流query名を切り替える
+
+引数:
+  - spec endpointSpec: 固定endpoint仕様
+  - parameters map[string]string: collectorが検証・正規化した入力
+
+返り値:
+  - url.URL: 安全に組み立てたGET先URL
+  - error: 入力とrouteの契約に違反した場合のエラー
+*/
+func (c *Client) buildRequestURL(spec endpointSpec, parameters map[string]string) (url.URL, error) {
+	if parameters == nil {
+		parameters = map[string]string{}
+	}
+	allowed := make(map[string]parameterSpec, len(spec.Parameters))
+	for _, parameter := range spec.Parameters {
+		allowed[parameter.Name] = parameter
+	}
+	for name := range parameters {
+		if _, exists := allowed[name]; !exists {
+			return url.URL{}, fmt.Errorf("KabusController dataset %qに未知の入力項目があります: %q", spec.Dataset, name)
+		}
+	}
+	for _, parameter := range spec.Parameters {
+		if parameter.Required && parameters[parameter.Name] == "" {
+			return url.URL{}, fmt.Errorf("KabusController dataset %qには入力項目 %q が必要です", spec.Dataset, parameter.Name)
+		}
+	}
+	if err := validateNormalizedParameterValues(spec, parameters); err != nil {
+		return url.URL{}, err
+	}
+
+	requestURL := c.baseURL
+	requestURL.Path = spec.Path
+	requestURL.RawPath = ""
+	requestURL.RawQuery = ""
+	requestURL.Fragment = ""
+	values := make(url.Values)
+
+	switch spec.Kind {
+	case kindFixed:
+	case kindControllerSymbol:
+		if err := validateSymbol(parameters["symbol"]); err != nil {
+			return url.URL{}, err
+		}
+		if err := setPathSelector(&requestURL, spec.Path, ":symbol", parameters["symbol"]); err != nil {
+			return url.URL{}, err
+		}
+	case kindSymbolExchange:
+		if err := validatePathAtom(parameters["symbol"]); err != nil {
+			return url.URL{}, err
+		}
+		if err := validatePathAtom(parameters["exchange"]); err != nil {
+			return url.URL{}, err
+		}
+		selector := parameters["symbol"] + "@" + parameters["exchange"]
+		if err := setPathSelector(&requestURL, spec.Path, ":symbol", selector); err != nil {
+			return url.URL{}, err
+		}
+	case kindPlainSymbol:
+		if err := validatePathAtom(parameters["symbol"]); err != nil {
+			return url.URL{}, err
+		}
+		if err := setPathSelector(&requestURL, spec.Path, ":symbol", parameters["symbol"]); err != nil {
+			return url.URL{}, err
+		}
+	case kindPair:
+		if err := validatePathAtom(parameters["pair"]); err != nil {
+			return url.URL{}, err
+		}
+		if err := setPathSelector(&requestURL, spec.Path, ":pair", parameters["pair"]); err != nil {
+			return url.URL{}, err
+		}
+	case kindResolver:
+		kind := parameters["kind"]
+		switch kind {
+		case "future":
+			if err := requireResolverParameters(parameters, []string{"product_code", "deriv_month"}, []string{"put_or_call", "strike_price", "deriv_weekly"}); err != nil {
+				return url.URL{}, err
+			}
+			if !isFutureProductCode(parameters["product_code"]) {
+				return url.URL{}, fmt.Errorf("KabusController resolverの先物商品コードが不正です: %q", parameters["product_code"])
+			}
+			requestURL.Path = "/kabusapi/symbolname/future"
+			values.Set("FutureCode", parameters["product_code"])
+		case "option":
+			if err := requireResolverParameters(parameters, []string{"product_code", "deriv_month", "put_or_call", "strike_price"}, []string{"deriv_weekly"}); err != nil {
+				return url.URL{}, err
+			}
+			if !isOptionProductCode(parameters["product_code"]) {
+				return url.URL{}, fmt.Errorf("KabusController resolverのオプション商品コードが不正です: %q", parameters["product_code"])
+			}
+			requestURL.Path = "/kabusapi/symbolname/option"
+			values.Set("OptionCode", parameters["product_code"])
+		case "mini_option_weekly":
+			if err := requireResolverParameters(parameters, []string{"deriv_month", "deriv_weekly", "put_or_call", "strike_price"}, []string{"product_code"}); err != nil {
+				return url.URL{}, err
+			}
+			requestURL.Path = "/kabusapi/symbolname/minioptionweekly"
+		default:
+			return url.URL{}, fmt.Errorf("KabusController resolverのkindが不正です: %q", kind)
+		}
+	default:
+		return url.URL{}, fmt.Errorf("KabusController dataset %qのroute種別が不正です", spec.Dataset)
+	}
+
+	if spec.Kind != kindResolver {
+		for _, parameter := range spec.Parameters {
+			if parameter.QueryName != "" {
+				if value, exists := parameters[parameter.Name]; exists && value != "" {
+					values.Set(parameter.QueryName, value)
+				}
+			}
+		}
+	} else {
+		for _, name := range []string{"deriv_month", "put_or_call", "strike_price", "deriv_weekly"} {
+			value, exists := parameters[name]
+			if !exists || value == "" {
+				continue
+			}
+			parameter, exists := allowed[name]
+			if !exists || parameter.QueryName == "" {
+				return url.URL{}, fmt.Errorf("KabusController resolverに未定義のquery入力があります: %q", name)
+			}
+			values.Set(parameter.QueryName, value)
+		}
+	}
+	requestURL.RawQuery = values.Encode()
+	return requestURL, nil
+}
+
+// ----------------------------------------
+
+/*
+isFutureProductCode は、resolverが受け付ける先物商品コードか確認します。
+
+機能:
+  - オプション商品コードが先物routeへ混入することを防ぐ
+
+引数:
+  - value string: 検証する商品コード
+
+返り値:
+  - bool: 対応する先物商品コードの場合はtrue
+*/
+func isFutureProductCode(value string) bool {
+	switch value {
+	case "NK225", "NK225mini", "TOPIX", "TOPIXmini", "GROWTH", "JPX400",
+		"DOW", "VI", "Core30", "REIT", "NK225micro":
+		return true
+	default:
+		return false
+	}
+}
+
+// ----------------------------------------
+
+/*
+isOptionProductCode は、resolverが受け付けるオプション商品コードか確認します。
+
+機能:
+  - 先物商品コードがオプションrouteへ混入することを防ぐ
+
+引数:
+  - value string: 検証する商品コード
+
+返り値:
+  - bool: 対応するオプション商品コードの場合はtrue
+*/
+func isOptionProductCode(value string) bool {
+	return value == "NK225op" || value == "NK225miniop"
+}
+
+// ----------------------------------------
+
+/*
+validateNormalizedParameterValues は、Clientに渡された正規化済み文字列を再検証します。
+
+機能:
+  - 入力値が上流queryとpathに安全に使える単一行文字列か確認する
+  - endpoint仕様のAllowed制約をClient境界でも再確認する
+
+引数:
+  - spec endpointSpec: 固定endpoint仕様
+  - parameters map[string]string: collectorが正規化した文字列入力
+
+返り値:
+  - error: 制御文字、前後空白、許容外の列挙値がある場合のエラー
+*/
+func validateNormalizedParameterValues(spec endpointSpec, parameters map[string]string) error {
+	parameterMap := make(map[string]parameterSpec, len(spec.Parameters))
+	for _, parameter := range spec.Parameters {
+		parameterMap[parameter.Name] = parameter
+	}
+	for name, value := range parameters {
+		parameter := parameterMap[name]
+		if value == "" {
+			continue
+		}
+		if strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00") {
+			return fmt.Errorf("KabusController dataset %qの入力項目 %q が不正です", spec.Dataset, name)
+		}
+		if len(parameter.Allowed) > 0 {
+			matched := false
+			for _, allowed := range parameter.Allowed {
+				if value == allowed {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("KabusController dataset %qの入力項目 %q は許容値でありません", spec.Dataset, name)
+			}
+		}
+	}
+	return nil
+}
+
+// ----------------------------------------
+
+/*
+requireResolverParameters は、resolver種別ごとの入力項目構成を検証します。
+
+機能:
+  - 必須項目の欠落を拒否する
+  - 別種類だけで使う項目の混入を拒否する
+
+引数:
+  - parameters map[string]string: resolverの検証対象入力
+  - required []string: 必ず空でない値が必要な項目名
+  - forbidden []string: 指定を許可しない項目名
+
+返り値:
+  - error: 必須不足または禁止項目がある場合のエラー
+*/
+func requireResolverParameters(parameters map[string]string, required, forbidden []string) error {
+	for _, name := range required {
+		if parameters[name] == "" {
+			return fmt.Errorf("KabusController resolverには入力項目 %q が必要です", name)
+		}
+	}
+	for _, name := range forbidden {
+		if parameters[name] != "" {
+			return fmt.Errorf("KabusController resolverのこのkindには入力項目 %q を指定できません", name)
+		}
+	}
+	return nil
+}
+
+// ----------------------------------------
+
+/*
+setPathSelector は、固定path templateの末尾へ安全な1 segmentを設定します。
+
+機能:
+  - templateが指定placeholderで終わることを確認する
+  - selectorが空でなくASCII英数字と限定記号だけであることを確認する
+
+引数:
+  - requestURL *url.URL: pathを更新するURL
+  - template string: 固定path template
+  - placeholder string: template末尾のplaceholder
+  - selector string: 1 path segmentとして設定する値
+
+返り値:
+  - error: templateまたはselectorが不正な場合のエラー
+*/
+func setPathSelector(requestURL *url.URL, template, placeholder, selector string) error {
+	if requestURL == nil || !strings.HasSuffix(template, "/"+placeholder) {
+		return errors.New("KabusControllerのpath templateが不正です")
+	}
+	if err := validatePathSelector(selector); err != nil {
+		return err
+	}
+	requestURL.Path = strings.TrimSuffix(template, "/"+placeholder) + "/" + selector
+	requestURL.RawPath = ""
+	return nil
+}
+
+// ----------------------------------------
+
+/*
+validatePathSelector は、上流pathの1 segmentに使う値を検証します。
+
+機能:
+  - 1～100文字のASCII英数字、ピリオド、アンダースコア、ハイフン、@だけを許可する
+  - path区切り、query、fragment、特殊要素の注入を拒否する
+
+引数:
+  - selector string: 検証するpath selector
+
+返り値:
+  - error: selectorが安全な1 segmentでない場合のエラー
+*/
+func validatePathSelector(selector string) error {
+	if selector == "" || strings.TrimSpace(selector) != selector {
+		return errors.New("KabusControllerのpath selectorは空にできず、前後に空白を含めることもできません")
+	}
+	if utf8.RuneCountInString(selector) > 100 || !pathSelectorPattern.MatchString(selector) {
+		return errors.New("KabusControllerのpath selectorは100文字以内の英数字と限定記号で指定してください")
+	}
+	if selector == "." || selector == ".." {
+		return errors.New("KabusControllerのpath selectorに特殊path要素は使用できません")
+	}
+	return nil
+}
+
+// ----------------------------------------
+
+/*
+validatePathAtom は、複数入力からpath selectorを組み立てる前の1要素を検証します。
+
+機能:
+  - 英数字とピリオド、アンダースコア、ハイフンだけを許可する
+  - 区切りに使う@を入力要素自体へ含めることを拒否する
+
+引数:
+  - value string: 検証するpath要素
+
+返り値:
+  - error: pathの1要素として不正な場合のエラー
+*/
+func validatePathAtom(value string) error {
+	if err := validatePathSelector(value); err != nil {
+		return err
+	}
+	if strings.ContainsRune(value, '@') {
+		return errors.New("KabusControllerのpath入力要素に@は使用できません")
+	}
+	return nil
+}
+
+// ----------------------------------------
+
+/*
 buildClientEndpoints は、固定datasetをHTTP client用mapへ変換します。
 
 機能:
@@ -279,11 +613,35 @@ func buildClientEndpoints() (map[string]endpointSpec, error) {
 		if _, exists := result[spec.Dataset]; exists {
 			return nil, fmt.Errorf("KabusController dataset %qが重複しています", spec.Dataset)
 		}
+		if spec.Kind == kindComposite {
+			if spec.Path != "" {
+				return nil, fmt.Errorf("KabusController複合dataset %qに固定pathは指定できません", spec.Dataset)
+			}
+			result[spec.Dataset] = spec
+			continue
+		}
 		if !strings.HasPrefix(spec.Path, "/") || path.Clean(spec.Path) != spec.Path {
 			return nil, fmt.Errorf("KabusController dataset %qのpathが不正です", spec.Dataset)
 		}
-		if spec.RequiresSymbol != strings.HasSuffix(spec.Path, "/:symbol") {
-			return nil, fmt.Errorf("KabusController dataset %qのsymbol pathが不正です", spec.Dataset)
+		switch spec.Kind {
+		case kindControllerSymbol, kindSymbolExchange, kindPlainSymbol:
+			if !strings.HasSuffix(spec.Path, "/:symbol") {
+				return nil, fmt.Errorf("KabusController dataset %qのsymbol pathが不正です", spec.Dataset)
+			}
+		case kindPair:
+			if !strings.HasSuffix(spec.Path, "/:pair") {
+				return nil, fmt.Errorf("KabusController dataset %qのpair pathが不正です", spec.Dataset)
+			}
+		case kindFixed:
+			if strings.Contains(spec.Path, ":") {
+				return nil, fmt.Errorf("KabusController固定dataset %qのpathにplaceholderがあります", spec.Dataset)
+			}
+		case kindResolver:
+			if spec.Path != "/kabusapi/symbolname" {
+				return nil, fmt.Errorf("KabusController resolver dataset %qのpathが不正です", spec.Dataset)
+			}
+		default:
+			return nil, fmt.Errorf("KabusController dataset %qのroute種別が不正です", spec.Dataset)
 		}
 		if _, exists := paths[spec.Path]; exists {
 			return nil, fmt.Errorf("KabusController path %qが重複しています", spec.Path)
@@ -520,13 +878,20 @@ responseSourceURL は、最終応答URLから公開用取得元を生成しま�
   - string: 公開metadataへ格納できる取得元URL
 */
 func responseSourceURL(response *http.Response, fallback string) string {
-	if response == nil || response.Request == nil || response.Request.URL == nil {
-		return fallback
+	var source *url.URL
+	if response != nil && response.Request != nil && response.Request.URL != nil {
+		value := *response.Request.URL
+		source = &value
+	} else {
+		parsed, err := url.Parse(fallback)
+		if err != nil {
+			return fallback
+		}
+		source = parsed
 	}
-	value := *response.Request.URL
-	value.User = nil
-	value.RawQuery = ""
-	value.ForceQuery = false
-	value.Fragment = ""
-	return value.String()
+	source.User = nil
+	source.RawQuery = ""
+	source.ForceQuery = false
+	source.Fragment = ""
+	return source.String()
 }

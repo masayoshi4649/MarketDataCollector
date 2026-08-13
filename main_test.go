@@ -131,7 +131,7 @@ TestBuildCollectorsRegistersKabusControllerProvider は、kabus-controller provi
 
 機能:
   - kabus-controllerだけを有効にして専用HTTPクライアントとcollectorを生成する
-  - provider名と公開される6データセットを確認する
+  - provider名と公開される18データセットを確認する
 
 引数:
   - t *testing.T: テスト状態を管理する値
@@ -159,8 +159,8 @@ func TestBuildCollectorsRegistersKabusControllerProvider(t *testing.T) {
 	if descriptor.Name != "kabus-controller" {
 		t.Errorf("provider = %+v, kabus-controllerを期待", descriptor)
 	}
-	if len(descriptor.Datasets) != 6 {
-		t.Errorf("kabus-controllerのデータセット件数 = %d, 6を期待", len(descriptor.Datasets))
+	if len(descriptor.Datasets) != 18 {
+		t.Errorf("kabus-controllerのデータセット件数 = %d, 18を期待", len(descriptor.Datasets))
 	}
 }
 
